@@ -1,0 +1,16 @@
+# Peer Registry
+# Known worker sessions and their capabilities.
+# The orchestrator uses this to decide where to dispatch work.
+
+peers: []
+
+# Example peer entry:
+# - id: "peer-001"
+#   name: "backend-worker"
+#   type: worker              # worker | reviewer | specialist
+#   cwd: "/home/user/project"
+#   capabilities:
+#     - "python"
+#     - "fastapi"
+#   status: available         # available | busy | offline
+#   last_seen: "2026-03-31T12:00:00Z"

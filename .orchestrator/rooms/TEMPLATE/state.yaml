@@ -1,0 +1,25 @@
+# Room State Template
+# Copy this directory to create a new room.
+# state.yaml is the authoritative state; log.md is append-only.
+
+room:
+  id: "TEMPLATE"
+  name: ""
+  status: draft              # draft | active | paused | completed | archived
+  program_id: null           # link to parent program
+  created_at: null
+  updated_at: null
+
+context:
+  goal: ""
+  constraints: []
+  acceptance_criteria: []
+
+assignments:
+  owner: null                # peer_id
+  reviewers: []
+
+lifecycle:
+  current_phase: triage      # triage | planning | execution | review | done
+  blocked_by: null
+  next_action: ""
