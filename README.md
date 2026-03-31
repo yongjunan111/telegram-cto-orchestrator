@@ -45,6 +45,8 @@ Structured task delegation artifacts stored in `.orchestrator/handoffs/`. A hand
 ## Directory Structure
 
 ```
+orchctl                    # CLI entry point (Python)
+pyproject.toml             # Project metadata and dependencies
 .orchestrator/
   active_programs.yaml     # All active programs (source of truth)
   peer_registry.yaml       # Known peer sessions and their capabilities
@@ -62,20 +64,64 @@ LICENSE
 
 ---
 
+## Getting Started
+
+Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone <repo-url> && cd telegram-cto-orchestrator
+
+# Install dependencies (if uv is not on PATH, prefix with its full path)
+uv sync                    # or: ~/.local/bin/uv sync
+```
+
+## Usage
+
+Run `orchctl` through the project venv:
+
+```bash
+# Create a room
+.venv/bin/python orchctl room create api-refactor \
+  --name "API Refactor" --goal "Migrate REST endpoints to v2"
+
+# List rooms
+.venv/bin/python orchctl room list
+
+# Show room details
+.venv/bin/python orchctl room show api-refactor
+
+# Append to room log
+.venv/bin/python orchctl log append api-refactor \
+  --actor orchestrator --message "Dispatched to backend-worker"
+```
+
+> **Tip:** If your shell activates the venv (`source .venv/bin/activate`), you can use `./orchctl` directly.
+
+### Supported Commands
+
+| Command | Description |
+|---|---|
+| `room create <id> --name ... --goal ...` | Create a new room from TEMPLATE |
+| `room list` | List all rooms with status and phase |
+| `room show <id>` | Display full room state |
+| `log append <id> --actor ... --message ...` | Append entry to room log |
+
+---
+
 ## Status
 
-**Skeleton / pre-alpha.** The structure and conventions are defined. Runtime tooling is not yet implemented.
+**MVP / pre-alpha.** Core room management CLI (`orchctl`) is functional. State conventions and directory structure are established.
 
 ### What Is Not Included Yet
 
 - Telegram transport adapter (bot polling, message routing)
 - Plugin packaging or marketplace integration
 - Full MCP server implementation
-- Automated room creation or program lifecycle tooling
+- Program, peer, and handoff management commands
 - Multi-peer coordination protocol
 - Any CI/CD or deployment configuration
 
-These are out of scope for v0. This skeleton establishes the conventions that those components will build on.
+These are out of scope for v0.
 
 ---
 

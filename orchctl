@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""orchctl — minimal CLI for managing orchestrator rooms."""
+
+import argparse
+import os
+import shutil
+import sys
+from datetime import datetime, timezone
+
+import yaml
+
+
+ORCHESTRATOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".orchestrator")
+ROOMS_DIR = os.path.join(ORCHESTRATOR_DIR, "rooms")
+TEMPLATE_DIR = os.path.join(ROOMS_DIR, "TEMPLATE")
+
+
+# ---------------------------------------------------------------------------
+# YAML helpers (PyYAML-based, preserves all fields)
+# ---------------------------------------------------------------------------
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _read_state(path: str) -> dict:
+    """Load room state.yaml as a dict. Preserves all fields."""
+    with open(path, "r") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _write_state(path: str, state: dict) -> None:
+    """Write state dict to YAML. Preserves all fields, no silent drops."""
+    with open(path, "w") as f:
+        yaml.dump(state, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def _update_state(path: str, updates: dict) -> None:
+    """Read state, apply dot-path updates, write back."""
+    state = _read_state(path)
+    for dotkey, value in updates.items():
+        parts = dotkey.split(".", 1)
+        if len(parts) == 2:
+            section, key = parts
+            if section not in state:
+                state[section] = {}
+            state[section][key] = value
+    _write_state(path, state)
+
+
+# ---------------------------------------------------------------------------
+# Room path helpers
+# ---------------------------------------------------------------------------
+
+def _room_dir(room_id: str) -> str:
+    return os.path.join(ROOMS_DIR, room_id)
+
+
+def _state_path(room_id: str) -> str:
+    return os.path.join(_room_dir(room_id), "state.yaml")
+
+
+def _log_path(room_id: str) -> str:
+    return os.path.join(_room_dir(room_id), "log.md")
+
+
+def _require_room(room_id: str) -> None:
+    if not os.path.isdir(_room_dir(room_id)):
+        print(f"Error: room '{room_id}' does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_room_create(args):
+    room_id = args.room_id
+    name = args.name
+    goal = args.goal
+
+    dest = _room_dir(room_id)
+    if os.path.exists(dest):
+        print(f"Error: room '{room_id}' already exists.", file=sys.stderr)
+        sys.exit(1)
+
+    # Copy template
+    shutil.copytree(TEMPLATE_DIR, dest)
+
+    # Update state.yaml
+    now = _now_iso()
+    state_file = _state_path(room_id)
+    _update_state(state_file, {
+        "room.id": room_id,
+        "room.name": name,
+        "room.status": "active",
+        "room.created_at": now,
+        "room.updated_at": now,
+        "context.goal": goal,
+        "lifecycle.current_phase": "triage",
+    })
+
+    # Append to log.md
+    log_file = _log_path(room_id)
+    entry = (
+        f"\n## {now} — orchestrator\n"
+        f"- Created room `{room_id}`\n"
+        f"- Name: {name}\n"
+        f"- Goal: {goal}\n"
+    )
+    with open(log_file, "a") as f:
+        f.write(entry)
+
+    print(f"Room '{room_id}' created.")
+    print(f"  name:  {name}")
+    print(f"  goal:  {goal}")
+    print(f"  phase: triage")
+    print(f"  path:  {dest}")
+
+
+def cmd_room_list(args):
+    if not os.path.isdir(ROOMS_DIR):
+        print("No rooms directory found.")
+        return
+
+    rooms = [
+        d for d in sorted(os.listdir(ROOMS_DIR))
+        if d != "TEMPLATE" and os.path.isdir(os.path.join(ROOMS_DIR, d))
+    ]
+
+    if not rooms:
+        print("No rooms found.")
+        return
+
+    # Header
+    fmt = "{:<24} {:<28} {:<12} {:<12}"
+    print(fmt.format("ID", "NAME", "STATUS", "PHASE"))
+    print("-" * 78)
+    for room_id in rooms:
+        state_file = _state_path(room_id)
+        if not os.path.exists(state_file):
+            print(fmt.format(room_id, "(no state.yaml)", "-", "-"))
+            continue
+        state = _read_state(state_file)
+        r = state["room"]
+        lc = state["lifecycle"]
+        name = (r.get("name") or "")[:27]
+        status = (str(r.get("status") or ""))[:11]
+        phase = (str(lc.get("current_phase") or ""))[:11]
+        print(fmt.format(room_id, name, status, phase))
+
+
+def cmd_room_show(args):
+    room_id = args.room_id
+    _require_room(room_id)
+    state_file = _state_path(room_id)
+    with open(state_file, "r") as f:
+        print(f.read(), end="")
+
+
+def cmd_log_append(args):
+    room_id = args.room_id
+    actor = args.actor
+    message = args.message
+    _require_room(room_id)
+
+    now = _now_iso()
+    entry = f"\n## {now} — {actor}\n- {message}\n"
+
+    log_file = _log_path(room_id)
+    with open(log_file, "a") as f:
+        f.write(entry)
+
+    # Update updated_at in state.yaml
+    _update_state(_state_path(room_id), {"room.updated_at": now})
+
+    print(f"Appended log entry to room '{room_id}'.")
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="orchctl",
+        description="Minimal CLI for managing orchestrator rooms.",
+    )
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
+    sub.required = True
+
+    # room subcommand
+    room_p = sub.add_parser("room", help="Room management commands")
+    room_sub = room_p.add_subparsers(dest="room_command", metavar="<subcommand>")
+    room_sub.required = True
+
+    # room create
+    create_p = room_sub.add_parser("create", help="Create a new room")
+    create_p.add_argument("room_id", metavar="<room-id>")
+    create_p.add_argument("--name", required=True, help="Human-readable room name")
+    create_p.add_argument("--goal", required=True, help="Room goal description")
+    create_p.set_defaults(func=cmd_room_create)
+
+    # room list
+    list_p = room_sub.add_parser("list", help="List all rooms")
+    list_p.set_defaults(func=cmd_room_list)
+
+    # room show
+    show_p = room_sub.add_parser("show", help="Show room state")
+    show_p.add_argument("room_id", metavar="<room-id>")
+    show_p.set_defaults(func=cmd_room_show)
+
+    # log subcommand
+    log_p = sub.add_parser("log", help="Log management commands")
+    log_sub = log_p.add_subparsers(dest="log_command", metavar="<subcommand>")
+    log_sub.required = True
+
+    # log append
+    append_p = log_sub.add_parser("append", help="Append entry to room log")
+    append_p.add_argument("room_id", metavar="<room-id>")
+    append_p.add_argument("--actor", required=True, help="Actor name")
+    append_p.add_argument("--message", required=True, help="Log message")
+    append_p.set_defaults(func=cmd_log_append)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
