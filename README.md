@@ -79,18 +79,6 @@ These are out of scope for v0. This skeleton establishes the conventions that th
 
 ---
 
-## Authorship Policy
-
-Commits in this repo should use a human maintainer identity.
-
-- Git author name and email should belong to a human maintainer.
-- AI tools may assist with drafting, scaffolding, or review.
-- Do not add `Co-authored-by` trailers for Claude, GPT, Codex, or other AI systems.
-
-This repo includes a local git commit hook and commit template to reinforce that policy.
-
----
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
