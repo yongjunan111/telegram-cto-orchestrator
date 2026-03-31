@@ -93,6 +93,18 @@ Run `orchctl` through the project venv:
 # Append to room log
 .venv/bin/python orchctl log append api-refactor \
   --actor orchestrator --message "Dispatched to backend-worker"
+
+# Create a handoff
+.venv/bin/python orchctl handoff create fix-auth-bug \
+  --room api-refactor --to backend-worker \
+  --task "Fix the auth middleware token validation" \
+  --priority high --scope "auth module only"
+
+# List handoffs
+.venv/bin/python orchctl handoff list
+
+# Show handoff details
+.venv/bin/python orchctl handoff show fix-auth-bug
 ```
 
 > **Tip:** If your shell activates the venv (`source .venv/bin/activate`), you can use `./orchctl` directly.
@@ -105,6 +117,9 @@ Run `orchctl` through the project venv:
 | `room list` | List all rooms with status and phase |
 | `room show <id>` | Display full room state |
 | `log append <id> --actor ... --message ...` | Append entry to room log |
+| `handoff create <id> --room ... --to ... --task ...` | Create a task handoff to a peer |
+| `handoff list` | List all handoffs with status |
+| `handoff show <id>` | Display full handoff details |
 
 ---
 
@@ -117,7 +132,7 @@ Run `orchctl` through the project venv:
 - Telegram transport adapter (bot polling, message routing)
 - Plugin packaging or marketplace integration
 - Full MCP server implementation
-- Program, peer, and handoff management commands
+- Program and peer management commands
 - Multi-peer coordination protocol
 - Any CI/CD or deployment configuration
 
