@@ -155,6 +155,198 @@ def cmd_handoff_show(args):
 
 
 # ---------------------------------------------------------------------------
+# brief
+# ---------------------------------------------------------------------------
+
+def _field(value) -> str:
+    """Return value as string, or 'Not specified' if empty/None."""
+    if value is None or value == "":
+        return "Not specified"
+    return str(value)
+
+
+def _bullet_list(items) -> str:
+    """Render a list as markdown bullets, or 'None specified' if empty/None."""
+    if not items:
+        return "None specified"
+    return "\n".join(f"- {item}" for item in items)
+
+
+def _build_verification(task_criteria, room_criteria) -> str:
+    lines = ["When reporting completion, provide:\n"]
+
+    has_specific = False
+
+    if task_criteria:
+        has_specific = True
+        lines.append("**Task acceptance criteria to verify:**")
+        for c in task_criteria:
+            lines.append(f"- [ ] {c}")
+        lines.append("")
+
+    if room_criteria:
+        has_specific = True
+        lines.append("**Room acceptance criteria to verify:**")
+        for c in room_criteria:
+            lines.append(f"- [ ] {c}")
+        lines.append("")
+
+    if not has_specific:
+        lines.append("No acceptance criteria pre-defined. Provide:")
+        lines.append("- Evidence of task completion with specific details")
+        lines.append("- Explanation of approach taken")
+        lines.append("")
+
+    # Always include these baseline items
+    lines.append("**In all cases, also report:**")
+    lines.append("- List of files created or modified")
+    lines.append("- Any risks, edge cases, or deferred items")
+
+    return "\n".join(lines)
+
+
+def _render_brief(handoff_state: dict, room_state: dict) -> str:
+    h = handoff_state.get("handoff", {})
+    task = handoff_state.get("task", {})
+    room = room_state.get("room", {})
+    context = room_state.get("context", {})
+    lifecycle = room_state.get("lifecycle", {})
+
+    handoff_id = _field(h.get("id"))
+    room_id = _field(h.get("room_id"))
+    assigned_to = _field(h.get("to"))
+    handoff_status = _field(h.get("status"))
+    priority = _field(h.get("priority"))
+
+    goal = _field(context.get("goal"))
+    room_status = _field(room.get("status"))
+    phase = _field(lifecycle.get("current_phase"))
+    next_action = _field(lifecycle.get("next_action"))
+    blocked_by = _field(lifecycle.get("blocked_by"))
+
+    room_constraints = _bullet_list(context.get("constraints"))
+    room_acceptance_criteria = _bullet_list(context.get("acceptance_criteria"))
+
+    description = _field(task.get("description"))
+    scope = _field(task.get("scope"))
+    task_constraints = _bullet_list(task.get("constraints"))
+    task_acceptance_criteria = _bullet_list(task.get("acceptance_criteria"))
+    report_back = _field(task.get("report_back"))
+
+    verification = _build_verification(
+        task.get("acceptance_criteria") or [],
+        context.get("acceptance_criteria") or [],
+    )
+
+    return f"""\
+# Execution Brief: {handoff_id}
+
+## Assignment
+- **Handoff:** {handoff_id}
+- **Room:** {room_id}
+- **Assigned to:** {assigned_to}
+- **Status:** {handoff_status}
+- **Priority:** {priority}
+
+## Room Context
+- **Goal:** {goal}
+- **Room status:** {room_status}
+- **Phase:** {phase}
+- **Next action:** {next_action}
+- **Blocked by:** {blocked_by}
+
+### Room-Level Constraints
+{room_constraints}
+
+### Room-Level Acceptance Criteria
+{room_acceptance_criteria}
+
+## Task
+{description}
+
+### Scope
+{scope}
+
+### Task-Level Constraints
+{task_constraints}
+
+### Task-Level Acceptance Criteria
+{task_acceptance_criteria}
+
+## Reporting
+{report_back}
+
+## Verification Expectations
+{verification}
+
+---
+*This brief is a derived view of handoff and room state. It is not authoritative — the source of truth is the handoff YAML and room state.yaml.*"""
+
+
+def _load_handoff_for_brief(handoff_id: str) -> dict:
+    """Load and validate a handoff state for direct-target brief rendering."""
+    require_handoff(handoff_id)
+    path = storage.handoff_path(handoff_id)
+
+    try:
+        handoff_state = storage.read_state(path)
+    except Exception as e:
+        print(
+            f"Error: handoff '{handoff_id}' has invalid YAML: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not isinstance(handoff_state, dict):
+        print(
+            f"Error: handoff '{handoff_id}' has invalid structure: expected a YAML mapping.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    handoff = handoff_state.get("handoff")
+    if not isinstance(handoff, dict):
+        print(
+            f"Error: handoff '{handoff_id}' has invalid structure: missing 'handoff' section.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return handoff_state
+
+
+def cmd_handoff_brief(args):
+    handoff_id = args.handoff_id
+    handoff_state = _load_handoff_for_brief(handoff_id)
+    room_id = handoff_state.get("handoff", {}).get("room_id")
+
+    if not room_id:
+        print(f"Error: handoff '{handoff_id}' has no room_id.", file=sys.stderr)
+        sys.exit(1)
+
+    room_state_path = storage.room_state_path(room_id)
+    if not os.path.isfile(room_state_path):
+        print(
+            f"Error: room '{room_id}' referenced by handoff '{handoff_id}' does not exist.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        room_state = storage.read_state(room_state_path)
+        if not isinstance(room_state, dict) or "room" not in room_state:
+            raise ValueError("missing 'room' section")
+    except Exception as e:
+        print(
+            f"Error: room '{room_id}' has invalid state.yaml: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(_render_brief(handoff_state, room_state))
+
+
+# ---------------------------------------------------------------------------
 # Transition helpers
 # ---------------------------------------------------------------------------
 

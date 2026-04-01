@@ -108,6 +108,9 @@ Run `orchctl` through the project venv:
 
 # Show handoff details
 .venv/bin/python orchctl handoff show fix-auth-bug
+
+# Generate a worker execution brief (on-demand, not stored)
+.venv/bin/python orchctl handoff brief fix-auth-bug
 ```
 
 > **Tip:** If your shell activates the venv (`source .venv/bin/activate`), you can use `./orchctl` directly.
@@ -126,6 +129,7 @@ Run `orchctl` through the project venv:
 | `handoff claim <id> --by <peer-id>` | Claim an open handoff (open → claimed) |
 | `handoff block <id> --by <peer-id> --reason "..."` | Block a claimed handoff (claimed → blocked) |
 | `handoff complete <id> --by <peer-id> --summary "..."` | Complete a claimed handoff (claimed → completed) |
+| `handoff brief <id>` | Generate a derived execution brief for workers |
 
 ---
 

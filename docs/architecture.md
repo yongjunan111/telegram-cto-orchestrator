@@ -76,6 +76,8 @@ Only the assigned peer (`handoff.to`) can transition a handoff. Reassignment is 
 
 Handoffs are managed via `orchctl handoff create|list|show|claim|block|complete`.
 
+The `orchctl handoff brief` command generates an on-demand execution brief by reading current handoff and room state. The brief is a derived worker instruction — it is not stored, not authoritative, and does not modify any state. It exists to give workers structured context without requiring them to parse raw YAML.
+
 ---
 
 ## Authority Model

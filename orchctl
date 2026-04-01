@@ -8,6 +8,7 @@ from lib.rooms import cmd_room_create, cmd_room_list, cmd_room_show
 from lib.handoffs import (
     cmd_handoff_create, cmd_handoff_list, cmd_handoff_show,
     cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
+    cmd_handoff_brief,
 )
 from lib.log import cmd_log_append
 
@@ -101,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
     hcomplete_p.add_argument("--by", required=True, help="Peer ID completing the handoff")
     hcomplete_p.add_argument("--summary", required=True, help="Completion summary")
     hcomplete_p.set_defaults(func=cmd_handoff_complete)
+
+    # handoff brief
+    hbrief_p = handoff_sub.add_parser("brief", help="Generate worker execution brief")
+    hbrief_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hbrief_p.set_defaults(func=cmd_handoff_brief)
 
     return parser
 
