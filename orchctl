@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # handoff list
     hlist_p = handoff_sub.add_parser("list", help="List all handoffs")
+    hlist_p.add_argument("--room", default=None, help="Filter handoffs by room ID")
     hlist_p.set_defaults(func=cmd_handoff_list)
 
     # handoff show

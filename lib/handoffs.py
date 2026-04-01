@@ -71,8 +71,16 @@ def cmd_handoff_create(args):
 
 
 def cmd_handoff_list(args):
+    room_id = getattr(args, "room", None)
+
+    if room_id is not None:
+        require_room(room_id)
+
     if not os.path.isdir(storage.HANDOFFS_DIR):
-        print("No handoffs found.")
+        if room_id is not None:
+            print(f"No handoffs found for room '{room_id}'.")
+        else:
+            print("No handoffs found.")
         return
 
     files = sorted(
@@ -81,25 +89,61 @@ def cmd_handoff_list(args):
     )
 
     if not files:
-        print("No handoffs found.")
+        if room_id is not None:
+            print(f"No handoffs found for room '{room_id}'.")
+        else:
+            print("No handoffs found.")
         return
 
     fmt = "{:<28} {:<20} {:<20} {:<10} {:<10}"
-    print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY"))
-    print("-" * 90)
+    header_printed = False
+    matched = 0
+    parse_errors = 0
+    parse_error_files = []
+
     for fname in files:
         path = os.path.join(storage.HANDOFFS_DIR, fname)
         try:
             state = storage.read_state(path)
             h = state.get("handoff", {})
+            if room_id is not None and h.get("room_id") != room_id:
+                continue
+            if not header_printed:
+                print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY"))
+                print("-" * 90)
+                header_printed = True
             hid = str(h.get("id") or fname[:-5])[:27]
             room = str(h.get("room_id") or "")[:19]
             to = str(h.get("to") or "")[:19]
             status = str(h.get("status") or "")[:9]
             priority = str(h.get("priority") or "")[:9]
             print(fmt.format(hid, room, to, status, priority))
+            matched += 1
         except Exception:
-            print(fmt.format(fname[:-5], "(parse error)", "-", "-", "-"))
+            parse_errors += 1
+            parse_error_files.append(fname[:-5])
+            if room_id is None:
+                # Unfiltered: show inline as before
+                if not header_printed:
+                    print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY"))
+                    print("-" * 90)
+                    header_printed = True
+                print(fmt.format(fname[:-5], "(parse error)", "-", "-", "-"))
+
+    # Post-loop output
+    if room_id is not None:
+        if matched == 0 and parse_errors == 0:
+            print(f"No handoffs found for room '{room_id}'.")
+        elif matched == 0 and parse_errors > 0:
+            print(
+                f"No parseable handoffs found for room '{room_id}'. "
+                f"{parse_errors} file(s) could not be parsed: {', '.join(parse_error_files)}"
+            )
+        elif matched > 0 and parse_errors > 0:
+            print(
+                f"\nWarning: {parse_errors} handoff file(s) could not be parsed "
+                f"and were excluded: {', '.join(parse_error_files)}"
+            )
 
 
 def cmd_handoff_show(args):

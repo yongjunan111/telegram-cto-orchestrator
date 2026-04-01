@@ -91,6 +91,8 @@ This section documents which file is the source of truth for each concern. When 
 | Peer identity and capabilities | `peer_registry.yaml` | Static metadata only. The `status` field is informational, not enforced by orchctl. |
 | Activity history | `rooms/<id>/log.md` | Append-only. Never parsed for state by tools. Exists for human review. |
 
+Room-to-handoff lookup is derived by scanning `handoffs/*.yaml` for matching `room_id` values. No reverse-link field is stored in room state. When filtering by room, unparseable handoff files are reported as warnings rather than inline rows, since their room membership cannot be determined.
+
 **Rule:** If there is ever a conflict between a YAML state file and a Markdown file, the YAML file wins. Markdown files are never parsed for state by tools — they exist for human review only.
 
 State transitions are recorded by updating `state.yaml` and appending a log entry to `log.md`. Both steps should happen together.

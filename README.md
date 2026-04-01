@@ -103,6 +103,9 @@ Run `orchctl` through the project venv:
 # List handoffs
 .venv/bin/python orchctl handoff list
 
+# List handoffs filtered by room
+.venv/bin/python orchctl handoff list --room api-refactor
+
 # Show handoff details
 .venv/bin/python orchctl handoff show fix-auth-bug
 ```
@@ -118,7 +121,7 @@ Run `orchctl` through the project venv:
 | `room show <id>` | Display full room state |
 | `log append <id> --actor ... --message ...` | Append entry to room log |
 | `handoff create <id> --room ... --to ... --task ...` | Create a task handoff to a peer |
-| `handoff list` | List all handoffs with status |
+| `handoff list [--room <room-id>]` | List handoffs, optionally filtered by room |
 | `handoff show <id>` | Display full handoff details |
 | `handoff claim <id> --by <peer-id>` | Claim an open handoff (open → claimed) |
 | `handoff block <id> --by <peer-id> --reason "..."` | Block a claimed handoff (claimed → blocked) |
