@@ -4,7 +4,7 @@
 
 The CTO orchestrator pattern describes a session that **triages, delegates, reviews, and reports** rather than implementing directly. It acts as the judgment layer above a set of worker peers — receiving requests, decomposing them, dispatching to capable peers, validating results, and surfacing conclusions to the user.
 
-This document covers the core concepts, state model, transport layer design, and decision flow for v0.
+This document covers the core concepts, state model, authority model, transport layer design, and decision flow.
 
 ---
 
@@ -12,11 +12,11 @@ This document covers the core concepts, state model, transport layer design, and
 
 ### Rooms
 
-A room is an isolated workspace for a single task or conversation thread. Rooms are the unit of delegation: when the orchestrator dispatches work to a peer, it does so in the context of a room.
+A room is a durable workspace for a single task or conversation thread. When the orchestrator dispatches work to a peer, it creates a handoff in the context of a room — the room provides the workspace, the handoff is the delegation unit.
 
 Each room lives at `.orchestrator/rooms/<room-id>/` and contains exactly two files:
 
-- **`state.yaml`** — The authoritative state for the room. Tracks goal, status, phase, assignments, constraints, and acceptance criteria. This file is the source of truth. Tools and automation read and write this file.
+- **`state.yaml`** — The authoritative state for the room. Tracks goal, status, phase, constraints, and acceptance criteria. The `assignments` section is a derived view (populated from active handoffs), not manually set. This file is the source of truth for room lifecycle; tools and automation read and write it.
 - **`log.md`** — An append-only activity log. Each entry records a timestamp, actor, and action summary. Never edited retroactively. Human-readable summary of what happened and why.
 
 Rooms are cheap to create and should be created liberally — one per distinct task or concern. They are archived, not deleted.
@@ -29,7 +29,7 @@ A program has:
 - A unique ID and human-readable name
 - Status: `active`, `paused`, `completed`, or `blocked`
 - Priority: `critical`, `high`, `medium`, or `low`
-- A list of associated room IDs
+- A list of associated room IDs (derived convenience — the true room-to-program link lives in `room.state.yaml` via `room.program_id`)
 - An optional owner (peer ID)
 
 Programs provide the high-level view. Rooms provide the execution detail.
@@ -43,23 +43,45 @@ Each peer entry records:
 - Type: `worker`, `reviewer`, or `specialist`
 - Working directory (`cwd`)
 - Capability tags (e.g., `python`, `fastapi`, `security`)
-- Current status: `available`, `busy`, or `offline`
+- Current status: `available`, `busy`, or `offline` (informational, not enforced by orchctl)
 - Last seen timestamp
 
-The registry is manually maintained in v0. Peer discovery and heartbeat are out of scope.
+The registry is manually maintained. It is static metadata only. Peer discovery and heartbeat are out of scope.
 
 ### Handoffs
 
-A handoff is a structured delegation artifact — a document the orchestrator creates when assigning work to a peer. Handoffs live in `.orchestrator/handoffs/`.
+A handoff is a structured delegation unit — a YAML state object the orchestrator creates when assigning work to a peer. Handoffs are stored as individual YAML files at `.orchestrator/handoffs/<handoff-id>.yaml`.
 
-A handoff specifies:
+Each handoff has its own lifecycle and tracks:
 - Which room and program the work belongs to
-- What the peer is expected to do
-- What constraints apply (scope, tools, time)
+- Who the work is delegated to (`to` field — this is authoritative for room assignment ownership)
+- What the peer is expected to do (task description, scope)
+- What constraints apply
 - What constitutes completion (acceptance criteria)
 - Where to report results
+- Status: `open`, `claimed`, `completed`, `blocked`
+- Timestamps for creation, claim, and completion
 
-In v0, handoffs are Markdown files created manually or by the orchestrator session. A structured schema and tooling for handoffs is a v1 concern.
+Handoffs are managed via `orchctl handoff create|list|show`.
+
+---
+
+## Authority Model
+
+This section documents which file is the source of truth for each concern. When information appears in multiple places, the authoritative source wins.
+
+| Concern | Authoritative Source | Notes |
+|---|---|---|
+| Room lifecycle (status, phase, goal, constraints, acceptance criteria) | `rooms/<id>/state.yaml` | The single source of truth for a room's current state. |
+| Delegation lifecycle (who is doing what, handoff status) | `handoffs/<id>.yaml` | Each handoff is one delegation unit with its own lifecycle. |
+| Program metadata (id, name, status, priority, owner) | `active_programs.yaml` | The `rooms` list within a program entry is a **derived convenience** — the true room-to-program link lives in `room.state.yaml` via `room.program_id`. |
+| Room assignment ownership | Derived from active handoffs | `room.assignments.owner` is **not** manually set. The authoritative record of "who is working on this room" is the handoff's `to` field. |
+| Peer identity and capabilities | `peer_registry.yaml` | Static metadata only. The `status` field is informational, not enforced by orchctl. |
+| Activity history | `rooms/<id>/log.md` | Append-only. Never parsed for state by tools. Exists for human review. |
+
+**Rule:** If there is ever a conflict between a YAML state file and a Markdown file, the YAML file wins. Markdown files are never parsed for state by tools — they exist for human review only.
+
+State transitions are recorded by updating `state.yaml` and appending a log entry to `log.md`. Both steps should happen together.
 
 ---
 
@@ -67,18 +89,14 @@ In v0, handoffs are Markdown files created manually or by the orchestrator sessi
 
 ```
 YAML (authoritative)
-  └── .orchestrator/active_programs.yaml
-  └── .orchestrator/peer_registry.yaml
-  └── .orchestrator/rooms/<id>/state.yaml
+  .orchestrator/active_programs.yaml
+  .orchestrator/peer_registry.yaml
+  .orchestrator/rooms/<id>/state.yaml
+  .orchestrator/handoffs/<id>.yaml
 
-Markdown (derived / append-only)
-  └── .orchestrator/rooms/<id>/log.md
-  └── .orchestrator/handoffs/<id>.md
+Markdown (append-only, human-readable)
+  .orchestrator/rooms/<id>/log.md
 ```
-
-**Rule:** If there is ever a conflict between a YAML file and a Markdown file, the YAML file wins. Markdown files are never parsed for state by tools — they exist for human review only.
-
-State transitions are recorded by updating `state.yaml` and appending a log entry to `log.md`. Both steps should happen together.
 
 ---
 
@@ -124,7 +142,7 @@ Every request the orchestrator receives passes through this flow:
 
 3. Dispatch
    - Create or update a room in state.yaml
-   - Write a handoff document
+   - Create a handoff YAML for the target peer
    - Send the handoff to the target peer
    - Log the dispatch in log.md
 
@@ -151,19 +169,25 @@ Every request the orchestrator receives passes through this flow:
 
 ### In Scope
 - Directory structure and file conventions
-- YAML schemas for programs, peers, and rooms
+- YAML schemas for programs, peers, rooms, and handoffs
 - Append-only log format
-- Handoff document convention
+- `orchctl` CLI with room, handoff, and log commands
 - This architecture document
 
 ### Out of Scope for v0
 - Telegram transport adapter implementation
-- Automated room creation tooling
 - Peer discovery or heartbeat protocol
 - MCP server implementation
 - Plugin packaging
 - Multi-orchestrator coordination
+- Handoff transition commands (`handoff claim`, `handoff complete`)
 - Any runtime beyond a Claude Code session reading/writing these files
+
+---
+
+## Deferred Decisions
+
+**schema_version**: Deferred until a breaking schema change. Current schemas are simple enough that additive changes are safe with PyYAML's permissive loading.
 
 ---
 

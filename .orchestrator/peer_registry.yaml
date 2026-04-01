@@ -1,16 +1,17 @@
 # Peer Registry
 # Known worker sessions and their capabilities.
-# The orchestrator uses this to decide where to dispatch work.
+# Static metadata only. The status field is informational, not enforced by orchctl.
+# Peer discovery and heartbeat are out of scope.
 
 peers: []
 
 # Example peer entry:
-# - id: "peer-001"
-#   name: "backend-worker"
+# - id: "backend-worker"
+#   name: "Backend Worker"
 #   type: worker              # worker | reviewer | specialist
-#   cwd: "/home/user/project"
+#   cwd: "/home/user/projects/backend"
 #   capabilities:
-#     - "python"
-#     - "fastapi"
-#   status: available         # available | busy | offline
-#   last_seen: "2026-03-31T12:00:00Z"
+#     - python
+#     - fastapi
+#   status: available         # available | busy | offline (informational only)
+#   last_seen: "2026-04-01T00:00:00Z"

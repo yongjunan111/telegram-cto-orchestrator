@@ -16,17 +16,17 @@ The design is transport-agnostic. Telegram is one adapter. The core state and lo
 
 ### Rooms
 Isolated workspaces for tasks or conversations. Each room lives in `.orchestrator/rooms/<room-id>/` and contains:
-- `state.yaml` — authoritative state (status, goal, assignments, phase)
+- `state.yaml` — authoritative state (status, goal, phase) plus derived assignment views
 - `log.md` — append-only activity log (human-readable, never edited retroactively)
 
 ### Programs
-Active work items tracked in `.orchestrator/active_programs.yaml`. A program is a named unit of work that spans one or more rooms and has an owner, priority, and status.
+Active work items tracked in `.orchestrator/active_programs.yaml`. A program is a named unit of work that spans one or more rooms and has an owner, priority, and status. The `rooms` list within a program entry is a derived convenience — the true room-to-program link lives in each room's `state.yaml` via `program_id`.
 
 ### Peer Registry
-Known worker sessions listed in `.orchestrator/peer_registry.yaml`. The orchestrator uses this to decide where to dispatch work — which peer has the right capabilities and is available.
+Known worker sessions listed in `.orchestrator/peer_registry.yaml`. The orchestrator consults this as a static capability directory when selecting peers for dispatch. Availability status is informational only, not enforced at runtime.
 
 ### Handoffs
-Structured task delegation artifacts stored in `.orchestrator/handoffs/`. A handoff is a document passed from the orchestrator to a peer, specifying what to do, what constraints apply, and what constitutes completion.
+Structured delegation units stored as individual YAML files at `.orchestrator/handoffs/<handoff-id>.yaml`. A handoff is a YAML state object the orchestrator creates when assigning work to a peer. Each handoff tracks what to do, what constraints apply, who the work is delegated to, and what constitutes completion. The handoff's `to` field is the authoritative record of room assignment ownership.
 
 ---
 
@@ -48,9 +48,9 @@ Structured task delegation artifacts stored in `.orchestrator/handoffs/`. A hand
 orchctl                    # CLI entry point (Python)
 pyproject.toml             # Project metadata and dependencies
 .orchestrator/
-  active_programs.yaml     # All active programs (source of truth)
+  active_programs.yaml     # Active programs (rooms list is derived; room.program_id is authoritative)
   peer_registry.yaml       # Known peer sessions and their capabilities
-  handoffs/                # Task delegation artifacts
+  handoffs/                # YAML state objects for task delegation
   rooms/
     TEMPLATE/              # Copy this to create a new room
       state.yaml           # Room state (authoritative)
