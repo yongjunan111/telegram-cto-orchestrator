@@ -108,3 +108,153 @@ def cmd_handoff_show(args):
     path = storage.handoff_path(handoff_id)
     with open(path, "r") as f:
         print(f.read(), end="")
+
+
+# ---------------------------------------------------------------------------
+# Transition helpers
+# ---------------------------------------------------------------------------
+
+_VALID_TRANSITIONS = {
+    "open": {"claimed"},
+    "claimed": {"blocked", "completed"},
+    "blocked": set(),
+    "completed": set(),
+}
+
+
+def _load_handoff(handoff_id: str) -> dict:
+    require_handoff(handoff_id)
+    return storage.read_state(storage.handoff_path(handoff_id))
+
+
+def _assert_transition(current: str, target: str) -> None:
+    allowed = _VALID_TRANSITIONS.get(current, set())
+    if target not in allowed:
+        print(
+            f"Error: Cannot transition from '{current}' to '{target}'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def _assert_assignee(state: dict, peer_id: str, handoff_id: str) -> None:
+    assignee = state.get("handoff", {}).get("to", "")
+    if peer_id != assignee:
+        print(
+            f"Error: Peer '{peer_id}' is not the assignee of handoff '{handoff_id}'. "
+            f"Current assignee: '{assignee}'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def _write_transition(handoff_id: str, state: dict, updates: dict) -> None:
+    """Merge updates into state and write atomically."""
+    for dotkey, value in updates.items():
+        parts = dotkey.split(".", 1)
+        section, key = parts[0], parts[1] if len(parts) == 2 else None
+        if key is None:
+            state[section] = value
+        else:
+            if section not in state:
+                state[section] = {}
+            state[section][key] = value
+    storage.write_state(storage.handoff_path(handoff_id), state)
+
+
+def _log_transition(room_id: str, handoff_id: str, peer_id: str, action: str, extra: str, now: str) -> None:
+    entry = (
+        f"\n## {now} — {peer_id}\n"
+        f"- Handoff `{handoff_id}` {action} by {peer_id}\n"
+    )
+    if extra:
+        entry += f"- {extra}\n"
+    storage.append_log(storage.room_log_path(room_id), entry)
+    storage.update_state(storage.room_state_path(room_id), {"room.updated_at": now})
+
+
+# ---------------------------------------------------------------------------
+# claim
+# ---------------------------------------------------------------------------
+
+def cmd_handoff_claim(args):
+    handoff_id = args.handoff_id
+    peer_id = args.by
+
+    require_peer(peer_id)
+    state = _load_handoff(handoff_id)
+    current = state.get("handoff", {}).get("status", "")
+    _assert_transition(current, "claimed")
+    _assert_assignee(state, peer_id, handoff_id)
+
+    now = storage.now_iso()
+    _write_transition(handoff_id, state, {
+        "handoff.status": "claimed",
+        "handoff.to": peer_id,
+        "timestamps.claimed_at": now,
+    })
+
+    room_id = state["handoff"]["room_id"]
+    _log_transition(room_id, handoff_id, peer_id, "claimed", "", now)
+
+    print(f"Handoff '{handoff_id}' claimed by '{peer_id}'.")
+
+
+# ---------------------------------------------------------------------------
+# block
+# ---------------------------------------------------------------------------
+
+def cmd_handoff_block(args):
+    handoff_id = args.handoff_id
+    peer_id = args.by
+    reason = args.reason
+
+    require_peer(peer_id)
+    state = _load_handoff(handoff_id)
+    current = state.get("handoff", {}).get("status", "")
+    _assert_transition(current, "blocked")
+    _assert_assignee(state, peer_id, handoff_id)
+
+    now = storage.now_iso()
+    _write_transition(handoff_id, state, {
+        "handoff.status": "blocked",
+        "timestamps.blocked_at": now,
+        "resolution.blocked_by": peer_id,
+        "resolution.blocked_reason": reason,
+    })
+
+    room_id = state["handoff"]["room_id"]
+    _log_transition(room_id, handoff_id, peer_id, "blocked", f"Reason: {reason}", now)
+
+    print(f"Handoff '{handoff_id}' blocked by '{peer_id}'.")
+    print(f"  reason: {reason}")
+
+
+# ---------------------------------------------------------------------------
+# complete
+# ---------------------------------------------------------------------------
+
+def cmd_handoff_complete(args):
+    handoff_id = args.handoff_id
+    peer_id = args.by
+    summary = args.summary
+
+    require_peer(peer_id)
+    state = _load_handoff(handoff_id)
+    current = state.get("handoff", {}).get("status", "")
+    _assert_transition(current, "completed")
+    _assert_assignee(state, peer_id, handoff_id)
+
+    now = storage.now_iso()
+    _write_transition(handoff_id, state, {
+        "handoff.status": "completed",
+        "timestamps.completed_at": now,
+        "resolution.completed_by": peer_id,
+        "resolution.summary": summary,
+    })
+
+    room_id = state["handoff"]["room_id"]
+    _log_transition(room_id, handoff_id, peer_id, "completed", f"Summary: {summary}", now)
+
+    print(f"Handoff '{handoff_id}' completed by '{peer_id}'.")
+    print(f"  summary: {summary}")

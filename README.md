@@ -120,6 +120,9 @@ Run `orchctl` through the project venv:
 | `handoff create <id> --room ... --to ... --task ...` | Create a task handoff to a peer |
 | `handoff list` | List all handoffs with status |
 | `handoff show <id>` | Display full handoff details |
+| `handoff claim <id> --by <peer-id>` | Claim an open handoff (open → claimed) |
+| `handoff block <id> --by <peer-id> --reason "..."` | Block a claimed handoff (claimed → blocked) |
+| `handoff complete <id> --by <peer-id> --summary "..."` | Complete a claimed handoff (claimed → completed) |
 
 ---
 

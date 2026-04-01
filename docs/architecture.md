@@ -62,7 +62,19 @@ Each handoff has its own lifecycle and tracks:
 - Status: `open`, `claimed`, `completed`, `blocked`
 - Timestamps for creation, claim, and completion
 
-Handoffs are managed via `orchctl handoff create|list|show`.
+**Handoff state transitions:**
+
+```
+open → claimed   (orchctl handoff claim <id> --by <peer-id>)
+claimed → blocked   (orchctl handoff block <id> --by <peer-id> --reason "...")
+claimed → completed   (orchctl handoff complete <id> --by <peer-id> --summary "...")
+```
+
+All other transitions are invalid and will be rejected. Completed and blocked handoffs are terminal states (no further transitions).
+
+Only the assigned peer (`handoff.to`) can transition a handoff. Reassignment is not supported in v0.
+
+Handoffs are managed via `orchctl handoff create|list|show|claim|block|complete`.
 
 ---
 
@@ -180,7 +192,6 @@ Every request the orchestrator receives passes through this flow:
 - MCP server implementation
 - Plugin packaging
 - Multi-orchestrator coordination
-- Handoff transition commands (`handoff claim`, `handoff complete`)
 - Any runtime beyond a Claude Code session reading/writing these files
 
 ---

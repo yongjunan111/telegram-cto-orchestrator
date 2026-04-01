@@ -5,7 +5,10 @@ import argparse
 import sys
 
 from lib.rooms import cmd_room_create, cmd_room_list, cmd_room_show
-from lib.handoffs import cmd_handoff_create, cmd_handoff_list, cmd_handoff_show
+from lib.handoffs import (
+    cmd_handoff_create, cmd_handoff_list, cmd_handoff_show,
+    cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
+)
 from lib.log import cmd_log_append
 
 
@@ -77,6 +80,26 @@ def build_parser() -> argparse.ArgumentParser:
     hshow_p = handoff_sub.add_parser("show", help="Show handoff details")
     hshow_p.add_argument("handoff_id", metavar="<handoff-id>")
     hshow_p.set_defaults(func=cmd_handoff_show)
+
+    # handoff claim
+    hclaim_p = handoff_sub.add_parser("claim", help="Claim a handoff")
+    hclaim_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hclaim_p.add_argument("--by", required=True, help="Peer ID claiming the handoff")
+    hclaim_p.set_defaults(func=cmd_handoff_claim)
+
+    # handoff block
+    hblock_p = handoff_sub.add_parser("block", help="Block a claimed handoff")
+    hblock_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hblock_p.add_argument("--by", required=True, help="Peer ID blocking the handoff")
+    hblock_p.add_argument("--reason", required=True, help="Reason for blocking")
+    hblock_p.set_defaults(func=cmd_handoff_block)
+
+    # handoff complete
+    hcomplete_p = handoff_sub.add_parser("complete", help="Complete a claimed handoff")
+    hcomplete_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hcomplete_p.add_argument("--by", required=True, help="Peer ID completing the handoff")
+    hcomplete_p.add_argument("--summary", required=True, help="Completion summary")
+    hcomplete_p.set_defaults(func=cmd_handoff_complete)
 
     return parser
 
