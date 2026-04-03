@@ -124,6 +124,12 @@ def build_parser() -> argparse.ArgumentParser:
     hcomplete_p.add_argument("handoff_id", metavar="<handoff-id>")
     hcomplete_p.add_argument("--by", required=True, help="Peer ID completing the handoff")
     hcomplete_p.add_argument("--summary", required=True, help="Completion summary")
+    hcomplete_p.add_argument("--file", action="append", default=None, dest="files",
+                             help="File created or modified (repeatable)")
+    hcomplete_p.add_argument("--verification", action="append", default=None, dest="verifications",
+                             help="Verification step performed (repeatable)")
+    hcomplete_p.add_argument("--risk", action="append", default=None, dest="risks",
+                             help="Remaining risk or deferred item (repeatable)")
     hcomplete_p.set_defaults(func=cmd_handoff_complete)
 
     # handoff brief

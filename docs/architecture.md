@@ -80,6 +80,8 @@ The `orchctl handoff brief` command generates an on-demand execution brief by re
 
 The `orchctl handoff room-memory` command generates suggested room memory updates from a terminal (blocked or completed) handoff. Like the execution brief, this is a read-only derived view — it does not modify room or handoff state. The orchestrator reviews the suggestion and applies it manually via `orchctl room memory` if appropriate.
 
+Completed handoffs may include structured evidence in the `resolution` section: `files_changed`, `verification`, and `risks`. These fields capture what was done, what was checked, and what remains — providing review context without enforcing a pass/fail gate.
+
 ---
 
 ## Authority Model

@@ -124,6 +124,16 @@ Run `orchctl` through the project venv:
 
 > **Tip:** If your shell activates the venv (`source .venv/bin/activate`), you can use `./orchctl` directly.
 
+```bash
+# Complete with evidence
+.venv/bin/python orchctl handoff complete fix-auth-bug \
+  --by backend-worker --summary "Token validation fixed" \
+  --file "auth/middleware.py" --file "tests/test_auth.py" \
+  --verification "pytest tests/test_auth.py passed" \
+  --verification "manual login flow verified" \
+  --risk "Token refresh not tested with expired sessions"
+```
+
 ### Supported Commands
 
 | Command | Description |
@@ -137,7 +147,7 @@ Run `orchctl` through the project venv:
 | `handoff show <id>` | Display full handoff details |
 | `handoff claim <id> --by <peer-id>` | Claim an open handoff (open → claimed) |
 | `handoff block <id> --by <peer-id> --reason "..."` | Block a claimed handoff (claimed → blocked) |
-| `handoff complete <id> --by <peer-id> --summary "..."` | Complete a claimed handoff (claimed → completed) |
+| `handoff complete <id> --by ... --summary ... [evidence opts]` | Complete a claimed handoff (claimed → completed) |
 | `handoff brief <id>` | Generate a derived execution brief for workers |
 | `handoff room-memory <id>` | Suggest room memory updates from a terminal handoff |
 | `room memory <id> [options]` | Update room operational memory fields |

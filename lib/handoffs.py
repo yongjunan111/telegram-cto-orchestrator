@@ -591,6 +591,9 @@ def cmd_handoff_complete(args):
     handoff_id = args.handoff_id
     peer_id = args.by
     summary = args.summary
+    files = args.files or []
+    verifications = args.verifications or []
+    risks = args.risks or []
 
     require_peer(peer_id)
     state = _load_handoff(handoff_id)
@@ -604,10 +607,26 @@ def cmd_handoff_complete(args):
         "timestamps.completed_at": now,
         "resolution.completed_by": peer_id,
         "resolution.summary": summary,
+        "resolution.files_changed": files,
+        "resolution.verification": verifications,
+        "resolution.risks": risks,
     })
 
     room_id = state["handoff"]["room_id"]
-    _log_transition(room_id, handoff_id, peer_id, "completed", f"Summary: {summary}", now)
+    extra_parts = [f"Summary: {summary}"]
+    if files:
+        extra_parts.append(f"{len(files)} file(s)")
+    if verifications:
+        extra_parts.append(f"{len(verifications)} verification(s)")
+    if risks:
+        extra_parts.append(f"{len(risks)} risk(s)")
+    _log_transition(room_id, handoff_id, peer_id, "completed", " | ".join(extra_parts), now)
 
     print(f"Handoff '{handoff_id}' completed by '{peer_id}'.")
     print(f"  summary: {summary}")
+    if files:
+        print(f"  files:   {len(files)}")
+    if verifications:
+        print(f"  checks:  {len(verifications)}")
+    if risks:
+        print(f"  risks:   {len(risks)}")
