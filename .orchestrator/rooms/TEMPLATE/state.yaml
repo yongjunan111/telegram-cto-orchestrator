@@ -12,6 +12,9 @@ room:
 
 context:
   goal: ""
+  request_summary: ""        # original request summary from user/CTO
+  current_summary: ""        # current situation summary (updated as work progresses)
+  open_questions: []          # unanswered questions that may affect direction
   constraints: []
   acceptance_criteria: []
 
@@ -24,5 +27,6 @@ assignments:
 
 lifecycle:
   current_phase: triage      # triage | planning | execution | review | done
-  blocked_by: null
   next_action: ""
+  blocker_summary: ""        # human-readable summary of current blockers
+  blocked_by: null

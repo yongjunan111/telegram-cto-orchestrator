@@ -16,8 +16,10 @@ The design is transport-agnostic. Telegram is one adapter. The core state and lo
 
 ### Rooms
 Isolated workspaces for tasks or conversations. Each room lives in `.orchestrator/rooms/<room-id>/` and contains:
-- `state.yaml` — authoritative state (status, goal, phase) plus derived assignment views
+- `state.yaml` — authoritative state (status, goal, memory context, phase) plus derived assignment views
 - `log.md` — append-only activity log (human-readable, never edited retroactively)
+
+Room state includes operational memory fields (request summary, current summary, open questions, blocker summary) that give the orchestrator broad context for triage and delegation.
 
 ### Programs
 Active work items tracked in `.orchestrator/active_programs.yaml`. A program is a named unit of work that spans one or more rooms and has an owner, priority, and status. The `rooms` list within a program entry is a derived convenience — the true room-to-program link lives in each room's `state.yaml` via `program_id`.
@@ -111,6 +113,13 @@ Run `orchctl` through the project venv:
 
 # Generate a worker execution brief (on-demand, not stored)
 .venv/bin/python orchctl handoff brief fix-auth-bug
+
+# Update room memory
+.venv/bin/python orchctl room memory api-refactor \
+  --current-summary "Auth module analysis complete, ready for implementation" \
+  --next-action "Create handoff for token validation fix" \
+  --open-question "Should we support refresh tokens?" \
+  --open-question "What is the session TTL policy?"
 ```
 
 > **Tip:** If your shell activates the venv (`source .venv/bin/activate`), you can use `./orchctl` directly.
@@ -130,6 +139,8 @@ Run `orchctl` through the project venv:
 | `handoff block <id> --by <peer-id> --reason "..."` | Block a claimed handoff (claimed → blocked) |
 | `handoff complete <id> --by <peer-id> --summary "..."` | Complete a claimed handoff (claimed → completed) |
 | `handoff brief <id>` | Generate a derived execution brief for workers |
+| `handoff room-memory <id>` | Suggest room memory updates from a terminal handoff |
+| `room memory <id> [options]` | Update room operational memory fields |
 
 ---
 

@@ -4,11 +4,11 @@
 import argparse
 import sys
 
-from lib.rooms import cmd_room_create, cmd_room_list, cmd_room_show
+from lib.rooms import cmd_room_create, cmd_room_list, cmd_room_show, cmd_room_memory
 from lib.handoffs import (
     cmd_handoff_create, cmd_handoff_list, cmd_handoff_show,
     cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
-    cmd_handoff_brief,
+    cmd_handoff_brief, cmd_handoff_room_memory,
 )
 from lib.log import cmd_log_append
 
@@ -41,6 +41,29 @@ def build_parser() -> argparse.ArgumentParser:
     show_p = room_sub.add_parser("show", help="Show room state")
     show_p.add_argument("room_id", metavar="<room-id>")
     show_p.set_defaults(func=cmd_room_show)
+
+    # room memory
+    rmem_p = room_sub.add_parser("memory", help="Update room memory fields")
+    rmem_p.add_argument("room_id", metavar="<room-id>")
+    rmem_p.add_argument("--request-summary", default=None, dest="request_summary",
+                        help="Set request summary (replaces current value)")
+    rmem_p.add_argument("--current-summary", default=None, dest="current_summary",
+                        help="Set current summary (replaces current value)")
+    rmem_p.add_argument("--next-action", default=None, dest="next_action",
+                        help="Set next action (replaces current value)")
+    rmem_p.add_argument("--blocker-summary", default=None, dest="blocker_summary",
+                        help="Set blocker summary (replaces current value)")
+    rmem_p.add_argument("--blocked-by", default=None, dest="blocked_by",
+                        help="Set blocked-by value (replaces current value)")
+    rmem_p.add_argument("--open-question", action="append", default=None, dest="open_questions",
+                        help="Set open questions (repeatable; replaces entire list)")
+    rmem_p.add_argument("--clear-open-questions", action="store_true", default=False,
+                        dest="clear_open_questions",
+                        help="Clear all open questions")
+    rmem_p.add_argument("--clear-blocker", action="store_true", default=False,
+                        dest="clear_blocker",
+                        help="Clear blocker_summary and blocked_by")
+    rmem_p.set_defaults(func=cmd_room_memory)
 
     # log subcommand
     log_p = sub.add_parser("log", help="Log management commands")
@@ -107,6 +130,11 @@ def build_parser() -> argparse.ArgumentParser:
     hbrief_p = handoff_sub.add_parser("brief", help="Generate worker execution brief")
     hbrief_p.add_argument("handoff_id", metavar="<handoff-id>")
     hbrief_p.set_defaults(func=cmd_handoff_brief)
+
+    # handoff room-memory
+    hrmem_p = handoff_sub.add_parser("room-memory", help="Suggest room memory updates from handoff result")
+    hrmem_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hrmem_p.set_defaults(func=cmd_handoff_room_memory)
 
     return parser
 

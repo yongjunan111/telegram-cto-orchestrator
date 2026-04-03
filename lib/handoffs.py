@@ -154,6 +154,52 @@ def cmd_handoff_show(args):
         print(f.read(), end="")
 
 
+def _load_handoff_with_room(handoff_id: str):
+    """Load and validate a handoff and its associated room state.
+
+    Returns (handoff_state, room_state) or exits with error.
+    """
+    require_handoff(handoff_id)
+    path = storage.handoff_path(handoff_id)
+
+    try:
+        handoff_state = storage.read_state(path)
+        if not isinstance(handoff_state, dict) or "handoff" not in handoff_state:
+            raise ValueError("missing 'handoff' section")
+    except Exception as e:
+        print(
+            f"Error: handoff '{handoff_id}' is malformed: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    room_id = handoff_state.get("handoff", {}).get("room_id")
+    if not room_id:
+        print(f"Error: handoff '{handoff_id}' has no room_id.", file=sys.stderr)
+        sys.exit(1)
+
+    room_state_path = storage.room_state_path(room_id)
+    if not os.path.isfile(room_state_path):
+        print(
+            f"Error: room '{room_id}' referenced by handoff '{handoff_id}' does not exist.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        room_state = storage.read_state(room_state_path)
+        if not isinstance(room_state, dict) or "room" not in room_state:
+            raise ValueError("missing 'room' section")
+    except Exception as e:
+        print(
+            f"Error: room '{room_id}' state is malformed: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return handoff_state, room_state
+
+
 # ---------------------------------------------------------------------------
 # brief
 # ---------------------------------------------------------------------------
@@ -283,67 +329,138 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
 *This brief is a derived view of handoff and room state. It is not authoritative — the source of truth is the handoff YAML and room state.yaml.*"""
 
 
-def _load_handoff_for_brief(handoff_id: str) -> dict:
-    """Load and validate a handoff state for direct-target brief rendering."""
-    require_handoff(handoff_id)
-    path = storage.handoff_path(handoff_id)
-
-    try:
-        handoff_state = storage.read_state(path)
-    except Exception as e:
-        print(
-            f"Error: handoff '{handoff_id}' has invalid YAML: {e}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    if not isinstance(handoff_state, dict):
-        print(
-            f"Error: handoff '{handoff_id}' has invalid structure: expected a YAML mapping.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    handoff = handoff_state.get("handoff")
-    if not isinstance(handoff, dict):
-        print(
-            f"Error: handoff '{handoff_id}' has invalid structure: missing 'handoff' section.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    return handoff_state
-
-
 def cmd_handoff_brief(args):
     handoff_id = args.handoff_id
-    handoff_state = _load_handoff_for_brief(handoff_id)
-    room_id = handoff_state.get("handoff", {}).get("room_id")
-
-    if not room_id:
-        print(f"Error: handoff '{handoff_id}' has no room_id.", file=sys.stderr)
-        sys.exit(1)
-
-    room_state_path = storage.room_state_path(room_id)
-    if not os.path.isfile(room_state_path):
-        print(
-            f"Error: room '{room_id}' referenced by handoff '{handoff_id}' does not exist.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    try:
-        room_state = storage.read_state(room_state_path)
-        if not isinstance(room_state, dict) or "room" not in room_state:
-            raise ValueError("missing 'room' section")
-    except Exception as e:
-        print(
-            f"Error: room '{room_id}' has invalid state.yaml: {e}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
+    handoff_state, room_state = _load_handoff_with_room(handoff_id)
     print(_render_brief(handoff_state, room_state))
+
+
+# ---------------------------------------------------------------------------
+# room-memory suggestion
+# ---------------------------------------------------------------------------
+
+def cmd_handoff_room_memory(args):
+    handoff_id = args.handoff_id
+    handoff_state, room_state = _load_handoff_with_room(handoff_id)
+
+    h = handoff_state.get("handoff", {})
+    task = handoff_state.get("task", {})
+    resolution = handoff_state.get("resolution", {})
+
+    status = h.get("status", "")
+
+    # Only terminal states
+    if status not in ("blocked", "completed"):
+        print(
+            f"Error: Handoff '{handoff_id}' is in '{status}' state. "
+            f"Room memory suggestions are only available for 'blocked' or 'completed' handoffs.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Build suggestions based on status
+    suggestions = _build_room_memory_suggestions(status, h, task, resolution, room_state)
+    output = _render_room_memory_suggestions(handoff_id, h.get("room_id", ""), status, suggestions)
+    print(output)
+
+
+def _build_room_memory_suggestions(status, h, task, resolution, room_state):
+    """Build conservative room memory suggestions from handoff terminal state."""
+    suggestions = {}
+
+    if status == "blocked":
+        blocked_reason = resolution.get("blocked_reason", "")
+        blocked_by = resolution.get("blocked_by") or h.get("to", "")
+
+        if blocked_reason:
+            suggestions["blocker_summary"] = blocked_reason
+        if blocked_by:
+            suggestions["blocked_by"] = blocked_by
+
+        # Conservative current_summary only if there's a reason
+        task_desc = task.get("description", "")
+        if blocked_reason and task_desc:
+            suggestions["current_summary"] = f"Blocked during: {task_desc[:80]}"
+
+    elif status == "completed":
+        summary = resolution.get("summary", "")
+
+        if summary:
+            suggestions["current_summary"] = summary
+
+        # Clear blocker fields if room currently has them
+        room_lifecycle = room_state.get("lifecycle", {})
+        if room_lifecycle.get("blocker_summary") or room_lifecycle.get("blocked_by"):
+            suggestions["clear_blocker"] = True
+
+        # Don't fabricate next_action — only suggest clearing blocker
+
+    return suggestions
+
+
+def _render_room_memory_suggestions(handoff_id, room_id, status, suggestions):
+    """Render suggestions as readable output with ready-to-run command."""
+    lines = [
+        f"# Room Memory Suggestions",
+        f"",
+        f"**Source:** handoff `{handoff_id}` ({status})",
+        f"**Target room:** `{room_id}`",
+        f"",
+    ]
+
+    if not suggestions:
+        lines.append("No room memory updates suggested — insufficient data in handoff result.")
+        lines.append("")
+        lines.append("---")
+        lines.append("*This is a read-only suggestion. No state has been modified.*")
+        return "\n".join(lines)
+
+    # Suggested changes section
+    lines.append("## Suggested Updates")
+    lines.append("")
+
+    if "current_summary" in suggestions:
+        lines.append(f"- **current_summary:** {suggestions['current_summary']}")
+    if "blocker_summary" in suggestions:
+        lines.append(f"- **blocker_summary:** {suggestions['blocker_summary']}")
+    if "blocked_by" in suggestions:
+        lines.append(f"- **blocked_by:** {suggestions['blocked_by']}")
+    if suggestions.get("clear_blocker"):
+        lines.append(f"- **clear blocker:** remove blocker_summary and blocked_by")
+    # next_action: only if explicitly present (we don't fabricate)
+    if "next_action" in suggestions:
+        lines.append(f"- **next_action:** {suggestions['next_action']}")
+
+    lines.append("")
+
+    # Ready-to-run command
+    lines.append("## Ready-to-Run Command")
+    lines.append("")
+    lines.append("Review the suggestion above, then apply with:")
+    lines.append("")
+
+    cmd_parts = [f".venv/bin/python orchctl room memory {room_id}"]
+
+    if "current_summary" in suggestions:
+        escaped = suggestions["current_summary"].replace('"', '\\"')
+        cmd_parts.append(f'  --current-summary "{escaped}"')
+    if "blocker_summary" in suggestions:
+        escaped = suggestions["blocker_summary"].replace('"', '\\"')
+        cmd_parts.append(f'  --blocker-summary "{escaped}"')
+    if "blocked_by" in suggestions:
+        escaped = suggestions["blocked_by"].replace('"', '\\"')
+        cmd_parts.append(f'  --blocked-by "{escaped}"')
+    if suggestions.get("clear_blocker"):
+        cmd_parts.append(f'  --clear-blocker')
+
+    lines.append("```bash")
+    lines.append(" \\\n".join(cmd_parts))
+    lines.append("```")
+    lines.append("")
+    lines.append("---")
+    lines.append("*Review before applying. This is a suggestion, not an automatic update. No state has been modified.*")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

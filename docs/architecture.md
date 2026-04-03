@@ -16,7 +16,7 @@ A room is a durable workspace for a single task or conversation thread. When the
 
 Each room lives at `.orchestrator/rooms/<room-id>/` and contains exactly two files:
 
-- **`state.yaml`** — The authoritative state for the room. Tracks goal, status, phase, constraints, and acceptance criteria. The `assignments` section is a derived view (populated from active handoffs), not manually set. This file is the source of truth for room lifecycle; tools and automation read and write it.
+- **`state.yaml`** — The authoritative state for the room. Tracks goal, status, phase, constraints, and acceptance criteria. The `assignments` section is a derived view (populated from active handoffs), not manually set. This file is the source of truth for room lifecycle; tools and automation read and write it. Room state includes operational memory fields (`request_summary`, `current_summary`, `open_questions`, `blocker_summary`) that hold broad CTO-level context. These fields are authoritative and manually maintained — they are not derived from other state. Room memory fields are updated explicitly via `orchctl room memory`. Each update records changes in the room log and updates `room.updated_at`. There is no automatic memory synchronization in v0 — all updates are manual.
 - **`log.md`** — An append-only activity log. Each entry records a timestamp, actor, and action summary. Never edited retroactively. Human-readable summary of what happened and why.
 
 Rooms are cheap to create and should be created liberally — one per distinct task or concern. They are archived, not deleted.
@@ -77,6 +77,8 @@ Only the assigned peer (`handoff.to`) can transition a handoff. Reassignment is 
 Handoffs are managed via `orchctl handoff create|list|show|claim|block|complete`.
 
 The `orchctl handoff brief` command generates an on-demand execution brief by reading current handoff and room state. The brief is a derived worker instruction — it is not stored, not authoritative, and does not modify any state. It exists to give workers structured context without requiring them to parse raw YAML.
+
+The `orchctl handoff room-memory` command generates suggested room memory updates from a terminal (blocked or completed) handoff. Like the execution brief, this is a read-only derived view — it does not modify room or handoff state. The orchestrator reviews the suggestion and applies it manually via `orchctl room memory` if appropriate.
 
 ---
 
