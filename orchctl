@@ -9,6 +9,7 @@ from lib.handoffs import (
     cmd_handoff_create, cmd_handoff_list, cmd_handoff_show,
     cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
     cmd_handoff_brief, cmd_handoff_room_memory, cmd_handoff_review,
+    cmd_handoff_approve, cmd_handoff_request_changes,
 )
 from lib.log import cmd_log_append
 
@@ -146,6 +147,20 @@ def build_parser() -> argparse.ArgumentParser:
     hreview_p = handoff_sub.add_parser("review", help="Review completion evidence for a completed handoff")
     hreview_p.add_argument("handoff_id", metavar="<handoff-id>")
     hreview_p.set_defaults(func=cmd_handoff_review)
+
+    # handoff approve
+    happrove_p = handoff_sub.add_parser("approve", help="Approve a completed handoff")
+    happrove_p.add_argument("handoff_id", metavar="<handoff-id>")
+    happrove_p.add_argument("--by", required=True, help="Reviewer peer ID")
+    happrove_p.add_argument("--note", default=None, help="Optional approval note")
+    happrove_p.set_defaults(func=cmd_handoff_approve)
+
+    # handoff request-changes
+    hreqch_p = handoff_sub.add_parser("request-changes", help="Request changes on a completed handoff")
+    hreqch_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hreqch_p.add_argument("--by", required=True, help="Reviewer peer ID")
+    hreqch_p.add_argument("--note", required=True, help="What changes are needed")
+    hreqch_p.set_defaults(func=cmd_handoff_request_changes)
 
     return parser
 

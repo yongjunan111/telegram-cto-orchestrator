@@ -151,6 +151,8 @@ Run `orchctl` through the project venv:
 | `handoff brief <id>` | Generate a derived execution brief for workers |
 | `handoff room-memory <id>` | Suggest room memory updates from a terminal handoff |
 | `handoff review <id>` | Review completion evidence for a completed handoff |
+| `handoff approve <id> --by <peer-id> [--note "..."]` | Record approval of a completed handoff |
+| `handoff request-changes <id> --by <peer-id> --note "..."` | Record change request on a completed handoff |
 | `room memory <id> [options]` | Update room operational memory fields |
 
 ---

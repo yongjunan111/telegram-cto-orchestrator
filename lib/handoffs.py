@@ -544,6 +544,20 @@ def _render_review(handoff_state, room_state):
     signals = _build_review_signals(task, resolution, context, lifecycle)
     signals_text = "\n".join(f"- **{level}:** {msg}" for level, msg in signals)
 
+    # Review outcome (if already reviewed)
+    review = handoff_state.get("review", {})
+    if review.get("outcome"):
+        review_section = f"""
+## Review Outcome (recorded)
+- **Outcome:** {review['outcome']}
+- **Reviewed by:** {review.get('reviewed_by', 'unknown')}
+- **Reviewed at:** {review.get('reviewed_at', 'unknown')}
+- **Note:** {review.get('note') or '(none)'}"""
+    else:
+        review_section = """
+## Review Outcome
+Not yet reviewed."""
+
     return f"""\
 # Completion Review: {handoff_id}
 
@@ -585,9 +599,10 @@ def _render_review(handoff_state, room_state):
 
 ## Review Signals
 {signals_text}
+{review_section}
 
 ---
-*This is a read-only review packet. No approval or rejection has been performed. The reviewer should assess the evidence above and decide on next steps manually.*"""
+*{"A review decision has been recorded above. This remains a read-only review view." if review.get("outcome") else "This is a read-only review packet. No approval or rejection has been performed. The reviewer should assess the evidence above and decide on next steps manually."}*"""
 
 
 def cmd_handoff_review(args):
@@ -604,6 +619,101 @@ def cmd_handoff_review(args):
         sys.exit(1)
 
     print(_render_review(handoff_state, room_state))
+
+
+# ---------------------------------------------------------------------------
+# review outcome
+# ---------------------------------------------------------------------------
+
+def cmd_handoff_approve(args):
+    handoff_id = args.handoff_id
+    reviewer = args.by
+    note = args.note or ""
+
+    require_peer(reviewer)
+    handoff_state, room_state = _load_handoff_with_room(handoff_id)
+
+    status = handoff_state.get("handoff", {}).get("status", "")
+    if status != "completed":
+        print(
+            f"Error: Handoff '{handoff_id}' is in '{status}' state. "
+            f"Only 'completed' handoffs can be reviewed.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Check if already reviewed
+    existing_review = handoff_state.get("review", {})
+    if existing_review.get("outcome"):
+        print(
+            f"Error: Handoff '{handoff_id}' already has review outcome: '{existing_review['outcome']}'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    now = storage.now_iso()
+    handoff_state["review"] = {
+        "outcome": "approved",
+        "reviewed_by": reviewer,
+        "reviewed_at": now,
+        "note": note,
+    }
+    storage.write_state(storage.handoff_path(handoff_id), handoff_state)
+
+    # Update room
+    room_id = handoff_state["handoff"]["room_id"]
+    extra = f"Review: approved"
+    if note:
+        extra += f" | Note: {note}"
+    _log_transition(room_id, handoff_id, reviewer, "approved", extra, now)
+
+    print(f"Handoff '{handoff_id}' approved by '{reviewer}'.")
+    if note:
+        print(f"  note: {note}")
+
+
+def cmd_handoff_request_changes(args):
+    handoff_id = args.handoff_id
+    reviewer = args.by
+    note = args.note
+
+    require_peer(reviewer)
+    handoff_state, room_state = _load_handoff_with_room(handoff_id)
+
+    status = handoff_state.get("handoff", {}).get("status", "")
+    if status != "completed":
+        print(
+            f"Error: Handoff '{handoff_id}' is in '{status}' state. "
+            f"Only 'completed' handoffs can be reviewed.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Check if already reviewed
+    existing_review = handoff_state.get("review", {})
+    if existing_review.get("outcome"):
+        print(
+            f"Error: Handoff '{handoff_id}' already has review outcome: '{existing_review['outcome']}'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    now = storage.now_iso()
+    handoff_state["review"] = {
+        "outcome": "changes_requested",
+        "reviewed_by": reviewer,
+        "reviewed_at": now,
+        "note": note,
+    }
+    storage.write_state(storage.handoff_path(handoff_id), handoff_state)
+
+    # Update room
+    room_id = handoff_state["handoff"]["room_id"]
+    extra = f"Review: changes_requested | Note: {note}"
+    _log_transition(room_id, handoff_id, reviewer, "changes_requested", extra, now)
+
+    print(f"Handoff '{handoff_id}' — changes requested by '{reviewer}'.")
+    print(f"  note: {note}")
 
 
 # ---------------------------------------------------------------------------
