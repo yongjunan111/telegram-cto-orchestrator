@@ -464,6 +464,149 @@ def _render_room_memory_suggestions(handoff_id, room_id, status, suggestions):
 
 
 # ---------------------------------------------------------------------------
+# review
+# ---------------------------------------------------------------------------
+
+def _build_review_signals(task, resolution, room_context, room_lifecycle):
+    """Build review signals from evidence and criteria."""
+    signals = []
+
+    files = resolution.get("files_changed") or []
+    verifications = resolution.get("verification") or []
+    risks = resolution.get("risks") or []
+    task_criteria = task.get("acceptance_criteria") or []
+    room_criteria = room_context.get("acceptance_criteria") or []
+    has_criteria = bool(task_criteria or room_criteria)
+
+    # Missing verification
+    if not verifications:
+        if has_criteria:
+            signals.append(("WARNING", "No verification steps recorded, but acceptance criteria are defined"))
+        else:
+            signals.append(("WARNING", "No verification steps recorded"))
+
+    # Missing files
+    if not files:
+        signals.append(("NOTE", "No files_changed recorded"))
+
+    # Risks present
+    if risks:
+        signals.append(("WARNING", f"{len(risks)} risk(s) reported by worker"))
+
+    # No acceptance criteria at all
+    if not has_criteria:
+        signals.append(("NOTE", "No acceptance criteria defined (room or task level)"))
+
+    # Room blocker still set
+    if room_lifecycle.get("blocker_summary") or room_lifecycle.get("blocked_by"):
+        signals.append(("NOTE", "Room still has blocker context set"))
+
+    if not signals:
+        signals.append(("OK", "Evidence appears complete — no warnings"))
+
+    return signals
+
+
+def _render_review(handoff_state, room_state):
+    """Render a structured review packet."""
+    h = handoff_state.get("handoff", {})
+    task = handoff_state.get("task", {})
+    resolution = handoff_state.get("resolution", {})
+    timestamps = handoff_state.get("timestamps", {})
+    room = room_state.get("room", {})
+    context = room_state.get("context", {})
+    lifecycle = room_state.get("lifecycle", {})
+
+    handoff_id = _field(h.get("id"))
+    room_id = _field(h.get("room_id"))
+    assigned_to = _field(h.get("to"))
+    status = _field(h.get("status"))
+    completed_by = _field(resolution.get("completed_by"))
+    completed_at = _field(timestamps.get("completed_at"))
+
+    # Task context
+    task_desc = _field(task.get("description"))
+    scope = _field(task.get("scope"))
+    room_goal = _field(context.get("goal"))
+    room_phase = _field(lifecycle.get("current_phase"))
+
+    # Acceptance criteria
+    room_criteria = _bullet_list(context.get("acceptance_criteria"))
+    task_criteria = _bullet_list(task.get("acceptance_criteria"))
+
+    # Evidence
+    summary = _field(resolution.get("summary"))
+    files = _bullet_list(resolution.get("files_changed"))
+    verifications = _bullet_list(resolution.get("verification"))
+    risks = _bullet_list(resolution.get("risks"))
+
+    # Build signals
+    signals = _build_review_signals(task, resolution, context, lifecycle)
+    signals_text = "\n".join(f"- **{level}:** {msg}" for level, msg in signals)
+
+    return f"""\
+# Completion Review: {handoff_id}
+
+## Review Target
+- **Handoff:** {handoff_id}
+- **Room:** {room_id}
+- **Assigned to:** {assigned_to}
+- **Status:** {status}
+- **Completed by:** {completed_by}
+- **Completed at:** {completed_at}
+
+## Task Context
+- **Task:** {task_desc}
+- **Scope:** {scope}
+- **Room goal:** {room_goal}
+- **Room phase:** {room_phase}
+
+## Acceptance Criteria
+
+### Room-Level
+{room_criteria}
+
+### Task-Level
+{task_criteria}
+
+## Completion Evidence
+
+### Summary
+{summary}
+
+### Files Changed
+{files}
+
+### Verification Steps
+{verifications}
+
+### Risks
+{risks}
+
+## Review Signals
+{signals_text}
+
+---
+*This is a read-only review packet. No approval or rejection has been performed. The reviewer should assess the evidence above and decide on next steps manually.*"""
+
+
+def cmd_handoff_review(args):
+    handoff_id = args.handoff_id
+    handoff_state, room_state = _load_handoff_with_room(handoff_id)
+
+    status = handoff_state.get("handoff", {}).get("status", "")
+    if status != "completed":
+        print(
+            f"Error: Handoff '{handoff_id}' is in '{status}' state. "
+            f"Review is only available for 'completed' handoffs.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(_render_review(handoff_state, room_state))
+
+
+# ---------------------------------------------------------------------------
 # Transition helpers
 # ---------------------------------------------------------------------------
 

@@ -8,7 +8,7 @@ from lib.rooms import cmd_room_create, cmd_room_list, cmd_room_show, cmd_room_me
 from lib.handoffs import (
     cmd_handoff_create, cmd_handoff_list, cmd_handoff_show,
     cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
-    cmd_handoff_brief, cmd_handoff_room_memory,
+    cmd_handoff_brief, cmd_handoff_room_memory, cmd_handoff_review,
 )
 from lib.log import cmd_log_append
 
@@ -141,6 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     hrmem_p = handoff_sub.add_parser("room-memory", help="Suggest room memory updates from handoff result")
     hrmem_p.add_argument("handoff_id", metavar="<handoff-id>")
     hrmem_p.set_defaults(func=cmd_handoff_room_memory)
+
+    # handoff review
+    hreview_p = handoff_sub.add_parser("review", help="Review completion evidence for a completed handoff")
+    hreview_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hreview_p.set_defaults(func=cmd_handoff_review)
 
     return parser
 

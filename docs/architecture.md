@@ -82,6 +82,8 @@ The `orchctl handoff room-memory` command generates suggested room memory update
 
 Completed handoffs may include structured evidence in the `resolution` section: `files_changed`, `verification`, and `risks`. These fields capture what was done, what was checked, and what remains — providing review context without enforcing a pass/fail gate.
 
+The `orchctl handoff review` command generates a read-only review packet from a completed handoff's evidence and room context. It highlights review signals (missing verification, outstanding risks, undefined criteria) without rendering a pass/fail verdict. Approval workflow is not implemented in v0.
+
 ---
 
 ## Authority Model
