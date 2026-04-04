@@ -88,6 +88,8 @@ Handoffs support structured task contracts via optional fields: `non_goals`, `in
 
 Review outcomes (`approved` or `changes_requested`) are recorded in the handoff's `review` section via `orchctl handoff approve` or `orchctl handoff request-changes`. The handoff status remains `completed` — the review outcome is a separate concern. Each handoff can be reviewed once; re-review is not supported in v0.
 
+When a review records `changes_requested`, the orchestrator creates a new rework handoff via `orchctl handoff rework` rather than reopening the original. This preserves the completed handoff's history and review record intact. The rework handoff inherits the original task contract, scope, and constraints, and includes the review feedback in its task description. Lineage is recorded via `handoff.rework_of`.
+
 ---
 
 ## Authority Model

@@ -163,6 +163,7 @@ Run `orchctl` through the project venv:
 | `handoff review <id>` | Review completion evidence for a completed handoff (contract-aware: surfaces validation, invariant, non-goal, and failure-mode prompts when a task contract is defined) |
 | `handoff approve <id> --by <peer-id> [--note "..."]` | Record approval of a completed handoff |
 | `handoff request-changes <id> --by <peer-id> --note "..."` | Record change request on a completed handoff |
+| `handoff rework <id> --by <peer-id> [--to <peer-id>]` | Create follow-up handoff from a changes_requested review |
 | `room memory <id> [options]` | Update room operational memory fields |
 
 ---

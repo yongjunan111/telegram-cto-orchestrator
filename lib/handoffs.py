@@ -834,6 +834,122 @@ def cmd_handoff_request_changes(args):
 
 
 # ---------------------------------------------------------------------------
+# rework
+# ---------------------------------------------------------------------------
+
+def cmd_handoff_rework(args):
+    source_id = args.handoff_id
+    requester = args.by
+    assignee = args.to  # may be None
+
+    require_peer(requester)
+
+    # Load and validate source handoff
+    source_state, room_state = _load_handoff_with_room(source_id)
+    source_h = source_state.get("handoff", {})
+    source_task = source_state.get("task", {})
+    source_review = source_state.get("review", {})
+
+    # Must be completed
+    if source_h.get("status") != "completed":
+        print(
+            f"Error: Handoff '{source_id}' is in '{source_h.get('status', '')}' state. "
+            f"Rework requires 'completed' status.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Must have changes_requested
+    if source_review.get("outcome") != "changes_requested":
+        outcome = source_review.get("outcome", "(no review)")
+        print(
+            f"Error: Handoff '{source_id}' has review outcome '{outcome}'. "
+            f"Rework requires 'changes_requested'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Determine assignee
+    if assignee:
+        require_peer(assignee)
+    else:
+        assignee = source_h.get("to", "")
+        if assignee:
+            require_peer(assignee)
+        else:
+            print(f"Error: Cannot determine assignee for rework.", file=sys.stderr)
+            sys.exit(1)
+
+    # Generate new handoff id
+    room_id = source_h.get("room_id")
+    rework_id = f"{source_id}-rework-1"
+
+    # Find unique id if rework already exists
+    counter = 1
+    while os.path.exists(storage.handoff_path(rework_id)):
+        counter += 1
+        rework_id = f"{source_id}-rework-{counter}"
+
+    os.makedirs(storage.HANDOFFS_DIR, exist_ok=True)
+
+    now = storage.now_iso()
+    review_note = source_review.get("note", "")
+
+    # Build rework task description
+    original_desc = source_task.get("description", "")
+    rework_desc = f"[Rework of {source_id}] {original_desc}"
+    if review_note:
+        rework_desc += f"\n\nReview feedback: {review_note}"
+
+    new_state = {
+        "handoff": {
+            "id": rework_id,
+            "room_id": room_id,
+            "program_id": source_h.get("program_id"),
+            "from": "orchestrator",
+            "to": assignee,
+            "status": "open",
+            "priority": source_h.get("priority", "medium"),
+            "rework_of": source_id,
+        },
+        "task": {
+            "description": rework_desc,
+            "scope": source_task.get("scope", ""),
+            "constraints": source_task.get("constraints") or [],
+            "acceptance_criteria": source_task.get("acceptance_criteria") or [],
+            "report_back": source_task.get("report_back", ""),
+            "non_goals": source_task.get("non_goals") or [],
+            "invariants": source_task.get("invariants") or [],
+            "failure_examples": source_task.get("failure_examples") or [],
+            "validation": source_task.get("validation") or [],
+        },
+        "timestamps": {
+            "created_at": now,
+            "claimed_at": None,
+            "completed_at": None,
+        },
+    }
+
+    storage.write_state(storage.handoff_path(rework_id), new_state)
+
+    # Room log
+    log_entry = (
+        f"\n## {now} — {requester}\n"
+        f"- Rework handoff `{rework_id}` created from `{source_id}`\n"
+        f"- Assigned to: {assignee}\n"
+        f"- Reason: changes_requested by {source_review.get('reviewed_by', 'unknown')}\n"
+    )
+    storage.append_log(storage.room_log_path(room_id), log_entry)
+    storage.update_state(storage.room_state_path(room_id), {"room.updated_at": now})
+
+    print(f"Rework handoff '{rework_id}' created.")
+    print(f"  source:   {source_id}")
+    print(f"  room:     {room_id}")
+    print(f"  to:       {assignee}")
+    print(f"  priority: {source_h.get('priority', 'medium')}")
+
+
+# ---------------------------------------------------------------------------
 # Transition helpers
 # ---------------------------------------------------------------------------
 

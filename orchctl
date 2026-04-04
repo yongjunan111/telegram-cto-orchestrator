@@ -10,6 +10,7 @@ from lib.handoffs import (
     cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
     cmd_handoff_brief, cmd_handoff_room_memory, cmd_handoff_review,
     cmd_handoff_approve, cmd_handoff_request_changes,
+    cmd_handoff_rework,
 )
 from lib.log import cmd_log_append
 
@@ -169,6 +170,13 @@ def build_parser() -> argparse.ArgumentParser:
     hreqch_p.add_argument("--by", required=True, help="Reviewer peer ID")
     hreqch_p.add_argument("--note", required=True, help="What changes are needed")
     hreqch_p.set_defaults(func=cmd_handoff_request_changes)
+
+    # handoff rework
+    hrework_p = handoff_sub.add_parser("rework", help="Create rework handoff from changes_requested review")
+    hrework_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hrework_p.add_argument("--by", required=True, help="Peer requesting the rework")
+    hrework_p.add_argument("--to", default=None, help="Assignee for rework (defaults to original assignee)")
+    hrework_p.set_defaults(func=cmd_handoff_rework)
 
     return parser
 
