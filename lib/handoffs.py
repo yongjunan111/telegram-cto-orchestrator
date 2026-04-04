@@ -536,11 +536,20 @@ def _build_review_signals(task, resolution, room_context, room_lifecycle):
     non_goals = task.get("non_goals") or []
     failure_examples = task.get("failure_examples") or []
 
-    # Validation contract vs verification
-    if task_validation and not verifications:
-        signals.append(("WARNING", f"Validation contract defines {len(task_validation)} step(s) but no verification was recorded"))
-    elif task_validation and verifications:
-        signals.append(("NOTE", f"Validation contract defines {len(task_validation)} step(s); {len(verifications)} verification(s) recorded — manual coverage review required"))
+    # Validation coverage signals
+    task_validation_steps = task.get("validation") or []
+    stored_coverage = resolution.get("validation_coverage") or []
+
+    if task_validation_steps:
+        covered_indices = set(c.get("validation_index") for c in stored_coverage)
+        uncovered_count = sum(1 for i in range(1, len(task_validation_steps) + 1) if i not in covered_indices)
+
+        if not stored_coverage:
+            signals.append(("WARNING", f"Validation contract defines {len(task_validation_steps)} step(s) but no validation coverage was recorded"))
+        elif uncovered_count > 0:
+            signals.append(("WARNING", f"{uncovered_count} of {len(task_validation_steps)} validation step(s) remain uncovered"))
+        else:
+            signals.append(("NOTE", f"All {len(task_validation_steps)} validation step(s) have explicit coverage recorded — reviewer should verify adequacy"))
 
     # Invariants
     if invariants:
@@ -644,6 +653,25 @@ def _render_review(handoff_state, room_state):
     else:
         contract_review_text = "No task contract defined — no additional review prompts."
 
+    # Build validation coverage display
+    task_validation_list = task.get("validation") or []
+    stored_coverage = resolution.get("validation_coverage") or []
+
+    if task_validation_list:
+        coverage_lines = [""]
+        for i, step in enumerate(task_validation_list, 1):
+            covers = [c for c in stored_coverage if c.get("validation_index") == i]
+            if covers:
+                coverage_lines.append(f"**[{i}]** {step}")
+                for c in covers:
+                    coverage_lines.append(f"  - Covered by: {c.get('evidence', '(no evidence)')}")
+            else:
+                coverage_lines.append(f"**[{i}]** {step}")
+                coverage_lines.append(f"  - **UNCOVERED**")
+        validation_coverage_text = "\n".join(coverage_lines)
+    else:
+        validation_coverage_text = "No validation contract defined."
+
     # Review outcome (if already reviewed)
     review = handoff_state.get("review", {})
     if review.get("outcome"):
@@ -716,6 +744,9 @@ Not yet reviewed."""
 
 ## Contract Review Prompts
 {contract_review_text}
+
+## Validation Coverage
+{validation_coverage_text}
 {review_section}
 
 ---
@@ -767,6 +798,34 @@ def cmd_handoff_approve(args):
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # Validation coverage gate
+    task_validation = handoff_state.get("task", {}).get("validation") or []
+    if task_validation:
+        stored_coverage = handoff_state.get("resolution", {}).get("validation_coverage") or []
+        covered_indices = set(c.get("validation_index") for c in stored_coverage)
+        uncovered = [
+            (i, task_validation[i - 1])
+            for i in range(1, len(task_validation) + 1)
+            if i not in covered_indices
+        ]
+
+        if not stored_coverage:
+            print(
+                f"Error: Cannot approve — validation contract defines {len(task_validation)} step(s) "
+                f"but no validation coverage was recorded. Use --validation-cover during completion.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        if uncovered:
+            print(
+                f"Error: Cannot approve — {len(uncovered)} validation step(s) remain uncovered:",
+                file=sys.stderr,
+            )
+            for idx, text in uncovered:
+                print(f"  [{idx}] {text}", file=sys.stderr)
+            sys.exit(1)
 
     now = storage.now_iso()
     handoff_state["review"] = {
@@ -1080,6 +1139,7 @@ def cmd_handoff_complete(args):
     files = args.files or []
     verifications = args.verifications or []
     risks = args.risks or []
+    validation_covers = args.validation_covers or []
 
     require_peer(peer_id)
     state = _load_handoff(handoff_id)
@@ -1087,7 +1147,53 @@ def cmd_handoff_complete(args):
     _assert_transition(current, "completed")
     _assert_assignee(state, peer_id, handoff_id)
 
+    # Parse and validate coverage
+    task_validation = state.get("task", {}).get("validation") or []
+    parsed_coverage = []
+    if validation_covers:
+        if not task_validation:
+            print(
+                "Error: --validation-cover specified but handoff has no task.validation contract.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        for vc in validation_covers:
+            if ":" not in vc:
+                print(
+                    f"Error: Invalid --validation-cover format: '{vc}'. Expected '<index>:<evidence>'.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            idx_str, evidence = vc.split(":", 1)
+            try:
+                idx = int(idx_str)
+            except ValueError:
+                print(
+                    f"Error: Invalid validation index: '{idx_str}'. Must be a number.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if idx < 1 or idx > len(task_validation):
+                print(
+                    f"Error: Validation index {idx} out of range. "
+                    f"Valid range: 1-{len(task_validation)}.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            parsed_coverage.append({
+                "validation_index": idx,
+                "validation_text": task_validation[idx - 1],
+                "evidence": evidence.strip(),
+            })
+
     now = storage.now_iso()
+
+    # Set validation coverage before transition write
+    if "resolution" not in state:
+        state["resolution"] = {}
+    state["resolution"]["validation_coverage"] = parsed_coverage
+
     _write_transition(handoff_id, state, {
         "handoff.status": "completed",
         "timestamps.completed_at": now,

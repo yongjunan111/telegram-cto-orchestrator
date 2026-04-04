@@ -86,6 +86,8 @@ The `orchctl handoff review` command generates a read-only review packet from a 
 
 Handoffs support structured task contracts via optional fields: `non_goals`, `invariants`, `failure_examples`, and `validation`. These encode what must not happen, what must be preserved, what constitutes failure, and what must be verified — embedding good instruction structure into the system rather than relying on one-off prompt quality. The execution brief surfaces these fields as worker-facing specifications.
 
+When `task.validation` defines a contract, `handoff complete` accepts `--validation-cover` to explicitly map each validation step to its evidence. `handoff review` displays per-step coverage status. `handoff approve` enforces a hard gate: all validation steps must have explicit coverage before approval is allowed. This is a deterministic gate based on explicit mapping, not semantic inference.
+
 Review outcomes (`approved` or `changes_requested`) are recorded in the handoff's `review` section via `orchctl handoff approve` or `orchctl handoff request-changes`. The handoff status remains `completed` — the review outcome is a separate concern. Each handoff can be reviewed once; re-review is not supported in v0.
 
 When a review records `changes_requested`, the orchestrator creates a new rework handoff via `orchctl handoff rework` rather than reopening the original. This preserves the completed handoff's history and review record intact. The rework handoff inherits the original task contract, scope, and constraints, and includes the review feedback in its task description. Lineage is recorded via `handoff.rework_of`.

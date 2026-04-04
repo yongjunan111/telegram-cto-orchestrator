@@ -142,6 +142,13 @@ Run `orchctl` through the project venv:
   --verification "pytest tests/test_auth.py passed" \
   --verification "manual login flow verified" \
   --risk "Token refresh not tested with expired sessions"
+
+# Complete with explicit validation coverage (required when task.validation is defined)
+.venv/bin/python orchctl handoff complete fix-auth \
+  --by backend-worker \
+  --summary "Auth fixed" \
+  --validation-cover "1:pytest tests/test_auth.py passed" \
+  --validation-cover "2:manual login flow verified"
 ```
 
 ### Supported Commands
