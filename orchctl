@@ -95,6 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
     hcreate_p.add_argument("--scope", default="", help="Scope of the work")
     hcreate_p.add_argument("--report-back", default="", dest="report_back",
                            help="Where/how to report results")
+    hcreate_p.add_argument("--non-goal", action="append", default=None, dest="non_goals",
+                           help="What must NOT be done (repeatable)")
+    hcreate_p.add_argument("--invariant", action="append", default=None, dest="invariants",
+                           help="Property that must be preserved (repeatable)")
+    hcreate_p.add_argument("--failure-example", action="append", default=None, dest="failure_examples",
+                           help="Concrete example of what failure looks like (repeatable)")
+    hcreate_p.add_argument("--validation", action="append", default=None, dest="validation",
+                           help="Verification step to perform after implementation (repeatable)")
     hcreate_p.set_defaults(func=cmd_handoff_create)
 
     # handoff list

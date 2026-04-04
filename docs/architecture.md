@@ -84,6 +84,8 @@ Completed handoffs may include structured evidence in the `resolution` section: 
 
 The `orchctl handoff review` command generates a read-only review packet from a completed handoff's evidence and room context. It highlights review signals (missing verification, outstanding risks, undefined criteria) without rendering a pass/fail verdict.
 
+Handoffs support structured task contracts via optional fields: `non_goals`, `invariants`, `failure_examples`, and `validation`. These encode what must not happen, what must be preserved, what constitutes failure, and what must be verified — embedding good instruction structure into the system rather than relying on one-off prompt quality. The execution brief surfaces these fields as worker-facing specifications.
+
 Review outcomes (`approved` or `changes_requested`) are recorded in the handoff's `review` section via `orchctl handoff approve` or `orchctl handoff request-changes`. The handoff status remains `completed` — the review outcome is a separate concern. Each handoff can be reviewed once; re-review is not supported in v0.
 
 ---

@@ -102,6 +102,16 @@ Run `orchctl` through the project venv:
   --task "Fix the auth middleware token validation" \
   --priority high --scope "auth module only"
 
+# Create a handoff with task contract
+.venv/bin/python orchctl handoff create fix-auth \
+  --room api-refactor --to backend-worker \
+  --task "Fix token validation" --priority high \
+  --scope "auth module only" \
+  --non-goal "Do not add refresh token support" \
+  --invariant "handoff.status must not change during review" \
+  --failure-example "Token validation passes for expired tokens" \
+  --validation "Run pytest tests/test_auth.py"
+
 # List handoffs
 .venv/bin/python orchctl handoff list
 

@@ -43,6 +43,10 @@ def cmd_handoff_create(args):
             "constraints": [],
             "acceptance_criteria": [],
             "report_back": report_back,
+            "non_goals": args.non_goals or [],
+            "invariants": args.invariants or [],
+            "failure_examples": args.failure_examples or [],
+            "validation": args.validation or [],
         },
         "timestamps": {
             "created_at": now,
@@ -218,10 +222,17 @@ def _bullet_list(items) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
-def _build_verification(task_criteria, room_criteria) -> str:
+def _build_verification(task_criteria, room_criteria, task_validation=None) -> str:
     lines = ["When reporting completion, provide:\n"]
 
     has_specific = False
+
+    if task_validation:
+        has_specific = True
+        lines.append("**Validation steps defined by contract:**")
+        for v in task_validation:
+            lines.append(f"- [ ] {v}")
+        lines.append("")
 
     if task_criteria:
         has_specific = True
@@ -278,10 +289,15 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
     task_constraints = _bullet_list(task.get("constraints"))
     task_acceptance_criteria = _bullet_list(task.get("acceptance_criteria"))
     report_back = _field(task.get("report_back"))
+    non_goals = _bullet_list(task.get("non_goals"))
+    invariants = _bullet_list(task.get("invariants"))
+    failure_examples = _bullet_list(task.get("failure_examples"))
+    validation_checklist = _bullet_list(task.get("validation"))
 
     verification = _build_verification(
         task.get("acceptance_criteria") or [],
         context.get("acceptance_criteria") or [],
+        task.get("validation") or [],
     )
 
     return f"""\
@@ -318,6 +334,18 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
 
 ### Task-Level Acceptance Criteria
 {task_acceptance_criteria}
+
+### Non-Goals
+{non_goals}
+
+### Invariants
+{invariants}
+
+### Failure Examples
+{failure_examples}
+
+### Validation Checklist
+{validation_checklist}
 
 ## Reporting
 {report_back}
@@ -534,6 +562,12 @@ def _render_review(handoff_state, room_state):
     room_criteria = _bullet_list(context.get("acceptance_criteria"))
     task_criteria = _bullet_list(task.get("acceptance_criteria"))
 
+    # Task contract fields
+    non_goals = _bullet_list(task.get("non_goals"))
+    invariants = _bullet_list(task.get("invariants"))
+    failure_examples = _bullet_list(task.get("failure_examples"))
+    validation_list = _bullet_list(task.get("validation"))
+
     # Evidence
     summary = _field(resolution.get("summary"))
     files = _bullet_list(resolution.get("files_changed"))
@@ -582,6 +616,20 @@ Not yet reviewed."""
 
 ### Task-Level
 {task_criteria}
+
+## Task Contract
+
+### Non-Goals
+{non_goals}
+
+### Invariants
+{invariants}
+
+### Failure Examples
+{failure_examples}
+
+### Validation
+{validation_list}
 
 ## Completion Evidence
 
