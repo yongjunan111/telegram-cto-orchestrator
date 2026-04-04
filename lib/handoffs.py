@@ -529,6 +529,31 @@ def _build_review_signals(task, resolution, room_context, room_lifecycle):
     if room_lifecycle.get("blocker_summary") or room_lifecycle.get("blocked_by"):
         signals.append(("NOTE", "Room still has blocker context set"))
 
+    # --- Contract-aware signals ---
+
+    task_validation = task.get("validation") or []
+    invariants = task.get("invariants") or []
+    non_goals = task.get("non_goals") or []
+    failure_examples = task.get("failure_examples") or []
+
+    # Validation contract vs verification
+    if task_validation and not verifications:
+        signals.append(("WARNING", f"Validation contract defines {len(task_validation)} step(s) but no verification was recorded"))
+    elif task_validation and verifications:
+        signals.append(("NOTE", f"Validation contract defines {len(task_validation)} step(s); {len(verifications)} verification(s) recorded — manual coverage review required"))
+
+    # Invariants
+    if invariants:
+        signals.append(("NOTE", f"{len(invariants)} invariant(s) defined — reviewer should verify these were preserved"))
+
+    # Non-goals
+    if non_goals:
+        signals.append(("NOTE", f"{len(non_goals)} non-goal(s) defined — reviewer should confirm no scope creep or forbidden changes"))
+
+    # Failure examples
+    if failure_examples:
+        signals.append(("NOTE", f"{len(failure_examples)} failure example(s) defined — reviewer should confirm these failure modes were avoided"))
+
     if not signals:
         signals.append(("OK", "Evidence appears complete — no warnings"))
 
@@ -577,6 +602,47 @@ def _render_review(handoff_state, room_state):
     # Build signals
     signals = _build_review_signals(task, resolution, context, lifecycle)
     signals_text = "\n".join(f"- **{level}:** {msg}" for level, msg in signals)
+
+    # Build contract review prompts
+    contract_prompts = []
+
+    task_validation = task.get("validation") or []
+    task_invariants = task.get("invariants") or []
+    task_non_goals = task.get("non_goals") or []
+    task_failure_examples = task.get("failure_examples") or []
+
+    if task_validation:
+        contract_prompts.append("### Validation Contract")
+        contract_prompts.append("Confirm each validation step was addressed:")
+        for v in task_validation:
+            contract_prompts.append(f"- [ ] {v}")
+        contract_prompts.append("")
+
+    if task_invariants:
+        contract_prompts.append("### Invariant Checks")
+        contract_prompts.append("Confirm each invariant was preserved:")
+        for inv in task_invariants:
+            contract_prompts.append(f"- [ ] {inv}")
+        contract_prompts.append("")
+
+    if task_non_goals:
+        contract_prompts.append("### Non-Goal Boundary Checks")
+        contract_prompts.append("Confirm none of these were done:")
+        for ng in task_non_goals:
+            contract_prompts.append(f"- [ ] Not done: {ng}")
+        contract_prompts.append("")
+
+    if task_failure_examples:
+        contract_prompts.append("### Failure Mode Checks")
+        contract_prompts.append("Confirm none of these failure modes occurred:")
+        for fe in task_failure_examples:
+            contract_prompts.append(f"- [ ] Not occurring: {fe}")
+        contract_prompts.append("")
+
+    if contract_prompts:
+        contract_review_text = "\n".join(contract_prompts)
+    else:
+        contract_review_text = "No task contract defined — no additional review prompts."
 
     # Review outcome (if already reviewed)
     review = handoff_state.get("review", {})
@@ -647,6 +713,9 @@ Not yet reviewed."""
 
 ## Review Signals
 {signals_text}
+
+## Contract Review Prompts
+{contract_review_text}
 {review_section}
 
 ---

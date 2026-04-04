@@ -82,7 +82,7 @@ The `orchctl handoff room-memory` command generates suggested room memory update
 
 Completed handoffs may include structured evidence in the `resolution` section: `files_changed`, `verification`, and `risks`. These fields capture what was done, what was checked, and what remains — providing review context without enforcing a pass/fail gate.
 
-The `orchctl handoff review` command generates a read-only review packet from a completed handoff's evidence and room context. It highlights review signals (missing verification, outstanding risks, undefined criteria) without rendering a pass/fail verdict.
+The `orchctl handoff review` command generates a read-only review packet from a completed handoff's evidence and room context. It highlights review signals (missing verification, outstanding risks, undefined criteria) without rendering a pass/fail verdict. Review signals are contract-aware: when task contracts define validation steps, invariants, non-goals, or failure examples, the review packet generates targeted prompts for the reviewer. The system never auto-determines contract satisfaction — it flags what needs manual verification.
 
 Handoffs support structured task contracts via optional fields: `non_goals`, `invariants`, `failure_examples`, and `validation`. These encode what must not happen, what must be preserved, what constitutes failure, and what must be verified — embedding good instruction structure into the system rather than relying on one-off prompt quality. The execution brief surfaces these fields as worker-facing specifications.
 
