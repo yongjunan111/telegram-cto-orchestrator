@@ -81,8 +81,8 @@ def cmd_handoff_create(args):
         "task": {
             "description": task_desc,
             "scope": scope,
-            "constraints": [],
-            "acceptance_criteria": [],
+            "constraints": args.constraints or [],
+            "acceptance_criteria": args.acceptance_criteria or [],
             "report_back": report_back,
             "non_goals": args.non_goals or [],
             "invariants": args.invariants or [],
@@ -323,6 +323,11 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
     next_action = _field(lifecycle.get("next_action"))
     blocked_by = _field(lifecycle.get("blocked_by"))
 
+    request_summary = _field(context.get("request_summary"))
+    current_summary = _field(context.get("current_summary"))
+    open_questions = _bullet_list(context.get("open_questions"))
+    blocker_summary = _field(lifecycle.get("blocker_summary"))
+
     room_constraints = _bullet_list(context.get("constraints"))
     room_acceptance_criteria = _bullet_list(context.get("acceptance_criteria"))
 
@@ -359,10 +364,18 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
 - **Next action:** {next_action}
 - **Blocked by:** {blocked_by}
 
-### Room-Level Constraints
+## Room Memory
+- **Request summary:** {request_summary}
+- **Current summary:** {current_summary}
+- **Open questions:**
+{open_questions}
+- **Blocker summary:** {blocker_summary}
+
+## Room-Level Contract
+### Constraints
 {room_constraints}
 
-### Room-Level Acceptance Criteria
+### Acceptance Criteria
 {room_acceptance_criteria}
 
 ## Task
@@ -371,22 +384,24 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
 ### Scope
 {scope}
 
-### Task-Level Constraints
+### Task-Level Positive Spec
+#### Constraints
 {task_constraints}
 
-### Task-Level Acceptance Criteria
+#### Acceptance Criteria
 {task_acceptance_criteria}
 
-### Non-Goals
+### Task Contract (Negative Boundaries)
+#### Non-Goals
 {non_goals}
 
-### Invariants
+#### Invariants
 {invariants}
 
-### Failure Examples
+#### Failure Examples
 {failure_examples}
 
-### Validation Checklist
+#### Validation Checklist
 {validation_checklist}
 
 ## Reporting
@@ -647,7 +662,9 @@ def _render_review(handoff_state, room_state):
     room_goal = _field(context.get("goal"))
     room_phase = _field(lifecycle.get("current_phase"))
 
-    # Acceptance criteria
+    # Constraints and acceptance criteria
+    room_constraints = _bullet_list(context.get("constraints"))
+    task_constraints = _bullet_list(task.get("constraints"))
     room_criteria = _bullet_list(context.get("acceptance_criteria"))
     task_criteria = _bullet_list(task.get("acceptance_criteria"))
 
@@ -757,6 +774,14 @@ Not yet reviewed."""
 - **Scope:** {scope}
 - **Room goal:** {room_goal}
 - **Room phase:** {room_phase}
+
+## Constraints
+
+### Room-Level
+{room_constraints}
+
+### Task-Level
+{task_constraints}
 
 ## Acceptance Criteria
 

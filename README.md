@@ -130,6 +130,16 @@ Run `orchctl` through the project venv:
   --next-action "Create handoff for token validation fix" \
   --open-question "Should we support refresh tokens?" \
   --open-question "What is the session TTL policy?"
+
+# Set room-level contract (constraints and acceptance criteria)
+.venv/bin/python orchctl room contract api-refactor \
+  --constraint "No breaking API changes" \
+  --constraint "Python 3.10+ only" \
+  --acceptance-criterion "All auth endpoints return 401/403 on invalid tokens" \
+  --acceptance-criterion "Token refresh works end-to-end"
+
+# Clear room constraints
+.venv/bin/python orchctl room contract api-refactor --clear-constraints
 ```
 
 > **Tip:** If your shell activates the venv (`source .venv/bin/activate`), you can use `./orchctl` directly.
@@ -159,7 +169,7 @@ Run `orchctl` through the project venv:
 | `room list` | List all rooms with status and phase |
 | `room show <id>` | Display full room state |
 | `log append <id> --actor ... --message ...` | Append entry to room log |
-| `handoff create <id> --room ... --to ... --task ...` | Create a task handoff to a peer |
+| `handoff create <id> --room ... --to ... --task ...` | Create a task handoff to a peer; supports `--constraint` and `--acceptance-criterion` for task-level positive spec (repeatable) |
 | `handoff list [--room <room-id>]` | List handoffs, optionally filtered by room |
 | `handoff show <id>` | Display full handoff details |
 | `handoff claim <id> --by <peer-id>` | Claim an open handoff (open → claimed) |
@@ -172,6 +182,7 @@ Run `orchctl` through the project venv:
 | `handoff request-changes <id> --by <peer-id> --note "..."` | Record change request on a completed handoff |
 | `handoff rework <id> --by <peer-id> [--to <peer-id>]` | Create follow-up handoff from a changes_requested review |
 | `room memory <id> [options]` | Update room operational memory fields; use `--phase <phase>` to set lifecycle phase manually |
+| `room contract <id> [options]` | Set room-level constraints and acceptance criteria (positive spec); use `--constraint`, `--acceptance-criterion`, `--clear-constraints`, `--clear-acceptance-criteria` |
 
 ---
 

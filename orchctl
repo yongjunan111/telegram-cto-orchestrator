@@ -4,7 +4,7 @@
 import argparse
 import sys
 
-from lib.rooms import cmd_room_create, cmd_room_list, cmd_room_show, cmd_room_memory
+from lib.rooms import cmd_room_create, cmd_room_list, cmd_room_show, cmd_room_memory, cmd_room_contract
 from lib.handoffs import (
     cmd_handoff_create, cmd_handoff_list, cmd_handoff_show,
     cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
@@ -69,6 +69,21 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Set room phase (e.g., triage, planning, execution, review, done)")
     rmem_p.set_defaults(func=cmd_room_memory)
 
+    # room contract
+    rcontract_p = room_sub.add_parser("contract", help="Update room-level contract (constraints, acceptance criteria)")
+    rcontract_p.add_argument("room_id", metavar="<room-id>")
+    rcontract_p.add_argument("--constraint", action="append", default=None, dest="constraints",
+                             help="Set room constraint (repeatable; replaces entire list)")
+    rcontract_p.add_argument("--acceptance-criterion", action="append", default=None, dest="acceptance_criteria",
+                             help="Set room acceptance criterion (repeatable; replaces entire list)")
+    rcontract_p.add_argument("--clear-constraints", action="store_true", default=False,
+                             dest="clear_constraints",
+                             help="Clear all room constraints")
+    rcontract_p.add_argument("--clear-acceptance-criteria", action="store_true", default=False,
+                             dest="clear_acceptance_criteria",
+                             help="Clear all room acceptance criteria")
+    rcontract_p.set_defaults(func=cmd_room_contract)
+
     # log subcommand
     log_p = sub.add_parser("log", help="Log management commands")
     log_sub = log_p.add_subparsers(dest="log_command", metavar="<subcommand>")
@@ -106,6 +121,10 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Concrete example of what failure looks like (repeatable)")
     hcreate_p.add_argument("--validation", action="append", default=None, dest="validation",
                            help="Verification step to perform after implementation (repeatable)")
+    hcreate_p.add_argument("--constraint", action="append", default=None, dest="constraints",
+                           help="Task constraint (repeatable)")
+    hcreate_p.add_argument("--acceptance-criterion", action="append", default=None, dest="acceptance_criteria",
+                           help="Task acceptance criterion (repeatable)")
     hcreate_p.set_defaults(func=cmd_handoff_create)
 
     # handoff list

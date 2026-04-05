@@ -219,6 +219,8 @@ Every request the orchestrator receives passes through this flow:
 
 **schema_version**: Deferred until a breaking schema change. Current schemas are simple enough that additive changes are safe with PyYAML's permissive loading.
 
+**Room memory vs. room contract**: Room memory (`request_summary`, `current_summary`, `open_questions`, `blocker_summary`) and room contract (`constraints`, `acceptance_criteria`) are distinct concerns. Memory tracks situational context — the evolving "what is happening" picture the orchestrator maintains as work progresses. Contract defines room-wide boundaries and definition of done — the "what must be true" specification that constrains all work done in this room. Both are authoritative fields in room state, managed via separate commands (`orchctl room memory` and `orchctl room contract`). Memory is updated frequently as context evolves; contract is set at room planning time and changes infrequently. Handoff briefs surface both: room memory provides worker situational context, room contract provides room-wide positive spec that task-level specs must satisfy.
+
 ---
 
 ## Related Documents

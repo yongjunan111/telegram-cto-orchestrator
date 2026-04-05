@@ -107,6 +107,75 @@ def cmd_room_memory(args):
         print(f"  - {change}")
 
 
+def cmd_room_contract(args):
+    room_id = args.room_id
+    require_room(room_id)
+
+    # Conflict validation
+    if args.constraints is not None and args.clear_constraints:
+        print(
+            "Error: --constraint and --clear-constraints cannot be used together.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if args.acceptance_criteria is not None and args.clear_acceptance_criteria:
+        print(
+            "Error: --acceptance-criterion and --clear-acceptance-criteria cannot be used together.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    updates = {}
+    log_changes = []
+
+    if args.constraints is not None:
+        updates["context.constraints"] = args.constraints
+        log_changes.append(f"constraints set ({len(args.constraints)} items)")
+
+    if args.clear_constraints:
+        updates["context.constraints"] = []
+        log_changes.append("constraints cleared")
+
+    if args.acceptance_criteria is not None:
+        updates["context.acceptance_criteria"] = args.acceptance_criteria
+        log_changes.append(f"acceptance_criteria set ({len(args.acceptance_criteria)} items)")
+
+    if args.clear_acceptance_criteria:
+        updates["context.acceptance_criteria"] = []
+        log_changes.append("acceptance_criteria cleared")
+
+    if not updates:
+        print("Error: No changes specified. Use --help to see available options.", file=sys.stderr)
+        sys.exit(1)
+
+    # Apply updates
+    now = storage.now_iso()
+    updates["room.updated_at"] = now
+
+    state_file = storage.room_state_path(room_id)
+    state = storage.read_state(state_file)
+
+    for dotkey, value in updates.items():
+        parts = dotkey.split(".", 1)
+        section, key = parts[0], parts[1]
+        if section not in state:
+            state[section] = {}
+        state[section][key] = value
+
+    storage.write_state(state_file, state)
+
+    log_entry = (
+        f"\n## {now} — orchestrator\n"
+        f"- Room contract updated: {', '.join(log_changes)}\n"
+    )
+    storage.append_log(storage.room_log_path(room_id), log_entry)
+
+    print(f"Room '{room_id}' contract updated.")
+    for change in log_changes:
+        print(f"  - {change}")
+
+
 def cmd_room_create(args):
     room_id = args.room_id
     name = args.name
