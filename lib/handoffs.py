@@ -33,6 +33,20 @@ def scan_room_handoffs(room_id: str):
     return results, errors
 
 
+def _derive_review_state(handoff_state: dict) -> str:
+    """Derive review state from handoff status and review outcome.
+
+    Returns: 'n/a', 'pending_review', 'approved', or 'changes_requested'.
+    """
+    status = handoff_state.get("handoff", {}).get("status", "")
+    if status != "completed":
+        return "n/a"
+    outcome = handoff_state.get("review", {}).get("outcome")
+    if not outcome:
+        return "pending_review"
+    return outcome
+
+
 def cmd_handoff_create(args):
     handoff_id = args.handoff_id
     room_id = args.room
@@ -126,7 +140,7 @@ def cmd_handoff_list(args):
             print("No handoffs found.")
         return
 
-    fmt = "{:<28} {:<20} {:<20} {:<10} {:<10}"
+    fmt = "{:<24} {:<16} {:<16} {:<10} {:<10} {:<18}"
     header_printed = False
     matched = 0
     parse_errors = 0
@@ -140,15 +154,16 @@ def cmd_handoff_list(args):
             if room_id is not None and h.get("room_id") != room_id:
                 continue
             if not header_printed:
-                print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY"))
-                print("-" * 90)
+                print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY", "REVIEW"))
+                print("-" * 96)
                 header_printed = True
-            hid = str(h.get("id") or fname[:-5])[:27]
-            room = str(h.get("room_id") or "")[:19]
-            to = str(h.get("to") or "")[:19]
+            hid = str(h.get("id") or fname[:-5])[:23]
+            room = str(h.get("room_id") or "")[:15]
+            to = str(h.get("to") or "")[:15]
             status = str(h.get("status") or "")[:9]
             priority = str(h.get("priority") or "")[:9]
-            print(fmt.format(hid, room, to, status, priority))
+            review_state = _derive_review_state(state)
+            print(fmt.format(hid, room, to, status, priority, review_state))
             matched += 1
         except Exception:
             parse_errors += 1
@@ -156,10 +171,10 @@ def cmd_handoff_list(args):
             if room_id is None:
                 # Unfiltered: show inline as before
                 if not header_printed:
-                    print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY"))
-                    print("-" * 90)
+                    print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY", "REVIEW"))
+                    print("-" * 96)
                     header_printed = True
-                print(fmt.format(fname[:-5], "(parse error)", "-", "-", "-"))
+                print(fmt.format(fname[:-5], "(parse error)", "-", "-", "-", "-"))
 
     # Post-loop output
     if room_id is not None:
@@ -403,20 +418,33 @@ def cmd_handoff_room_memory(args):
     resolution = handoff_state.get("resolution", {})
 
     status = h.get("status", "")
+    review_state = _derive_review_state(handoff_state)
 
-    # Only terminal states
-    if status not in ("blocked", "completed"):
+    if status == "blocked":
+        # Blocker suggestions — unchanged
+        suggestions = _build_room_memory_suggestions(status, h, task, resolution, room_state)
+        output = _render_room_memory_suggestions(handoff_id, h.get("room_id", ""), status, suggestions)
+        print(output)
+    elif status == "completed" and review_state == "approved":
+        # Success-path suggestions — only after approval
+        suggestions = _build_room_memory_suggestions(status, h, task, resolution, room_state)
+        output = _render_room_memory_suggestions(handoff_id, h.get("room_id", ""), status, suggestions)
+        print(output)
+    elif status == "completed" and review_state == "pending_review":
+        print(f"Handoff '{handoff_id}' is completed but not yet reviewed.")
+        print(f"Completion-derived room memory updates are withheld until approval.")
+        print(f"Run 'orchctl handoff review {handoff_id}' to inspect, then approve or request changes.")
+    elif status == "completed" and review_state == "changes_requested":
+        print(f"Handoff '{handoff_id}' has review outcome: changes_requested.")
+        print(f"Completion result has not been accepted into room broad context.")
+        print(f"A rework handoff should address the review feedback before room memory is updated.")
+    else:
         print(
             f"Error: Handoff '{handoff_id}' is in '{status}' state. "
             f"Room memory suggestions are only available for 'blocked' or 'completed' handoffs.",
             file=sys.stderr,
         )
         sys.exit(1)
-
-    # Build suggestions based on status
-    suggestions = _build_room_memory_suggestions(status, h, task, resolution, room_state)
-    output = _render_room_memory_suggestions(handoff_id, h.get("room_id", ""), status, suggestions)
-    print(output)
 
 
 def _build_room_memory_suggestions(status, h, task, resolution, room_state):

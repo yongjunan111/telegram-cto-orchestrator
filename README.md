@@ -166,7 +166,7 @@ Run `orchctl` through the project venv:
 | `handoff block <id> --by <peer-id> --reason "..."` | Block a claimed handoff (claimed → blocked) |
 | `handoff complete <id> --by ... --summary ... [evidence opts]` | Complete a claimed handoff (claimed → completed) |
 | `handoff brief <id>` | Generate a derived execution brief for workers |
-| `handoff room-memory <id>` | Suggest room memory updates from a terminal handoff |
+| `handoff room-memory <id>` | Suggest room memory updates from a terminal handoff (`handoff list` shows both execution status and review state; `handoff room-memory` suggestions are approval-gated — completion results are not propagated to room context until explicitly approved) |
 | `handoff review <id>` | Review completion evidence for a completed handoff (contract-aware: surfaces validation, invariant, non-goal, and failure-mode prompts when a task contract is defined) |
 | `handoff approve <id> --by <peer-id> [--note "..."]` | Record approval of a completed handoff |
 | `handoff request-changes <id> --by <peer-id> --note "..."` | Record change request on a completed handoff |

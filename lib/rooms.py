@@ -5,7 +5,7 @@ import sys
 
 from . import storage
 from .validators import validate_slug, require_room
-from .handoffs import scan_room_handoffs
+from .handoffs import scan_room_handoffs, _derive_review_state
 
 
 def cmd_room_memory(args):
@@ -273,3 +273,19 @@ def cmd_room_show(args):
         for status, ids in status_groups.items():
             if status not in ("open", "claimed", "blocked", "completed"):
                 print(f"  {status}: {len(ids)} — {', '.join(ids)}")
+
+        # Review buckets for completed handoffs
+        review_buckets = {}
+        for ho_state in handoffs:
+            h = ho_state.get("handoff", {})
+            if h.get("status") == "completed":
+                rs = _derive_review_state(ho_state)
+                review_buckets.setdefault(rs, []).append(h.get("id", "?"))
+
+        if review_buckets:
+            print()
+            print("  Review status (completed handoffs):")
+            for rs in ["pending_review", "approved", "changes_requested"]:
+                ids = review_buckets.get(rs, [])
+                if ids:
+                    print(f"    {rs}: {len(ids)} — {', '.join(ids)}")
