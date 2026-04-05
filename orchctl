@@ -65,6 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     rmem_p.add_argument("--clear-blocker", action="store_true", default=False,
                         dest="clear_blocker",
                         help="Clear blocker_summary and blocked_by")
+    rmem_p.add_argument("--phase", default=None,
+                        help="Set room phase (e.g., triage, planning, execution, review, done)")
     rmem_p.set_defaults(func=cmd_room_memory)
 
     # log subcommand

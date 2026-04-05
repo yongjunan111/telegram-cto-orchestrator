@@ -16,7 +16,7 @@ The design is transport-agnostic. Telegram is one adapter. The core state and lo
 
 ### Rooms
 Isolated workspaces for tasks or conversations. Each room lives in `.orchestrator/rooms/<room-id>/` and contains:
-- `state.yaml` — authoritative state (status, goal, memory context, phase) plus derived assignment views
+- `state.yaml` — authoritative state (status, goal, memory context, phase); handoff delegation summary is derived at render time by `room show`, not stored here
 - `log.md` — append-only activity log (human-readable, never edited retroactively)
 
 Room state includes operational memory fields (request summary, current summary, open questions, blocker summary) that give the orchestrator broad context for triage and delegation.
@@ -171,7 +171,7 @@ Run `orchctl` through the project venv:
 | `handoff approve <id> --by <peer-id> [--note "..."]` | Record approval of a completed handoff |
 | `handoff request-changes <id> --by <peer-id> --note "..."` | Record change request on a completed handoff |
 | `handoff rework <id> --by <peer-id> [--to <peer-id>]` | Create follow-up handoff from a changes_requested review |
-| `room memory <id> [options]` | Update room operational memory fields |
+| `room memory <id> [options]` | Update room operational memory fields; use `--phase <phase>` to set lifecycle phase manually |
 
 ---
 

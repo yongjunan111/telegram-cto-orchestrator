@@ -18,13 +18,6 @@ context:
   constraints: []
   acceptance_criteria: []
 
-# ── Derived View ──────────────────────────────────────────────────────────────
-# These fields are populated by reading active handoffs.
-# Do not set manually. See docs/architecture.md Authority Model.
-assignments:
-  owner: null                  # derived: active handoff's `to` field
-  reviewers: []                # derived: handoff or program context
-
 lifecycle:
   current_phase: triage      # triage | planning | execution | review | done
   next_action: ""

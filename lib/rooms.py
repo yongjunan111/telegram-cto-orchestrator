@@ -5,6 +5,7 @@ import sys
 
 from . import storage
 from .validators import validate_slug, require_room
+from .handoffs import scan_room_handoffs
 
 
 def cmd_room_memory(args):
@@ -69,6 +70,10 @@ def cmd_room_memory(args):
         updates["lifecycle.blocker_summary"] = ""
         updates["lifecycle.blocked_by"] = None
         log_changes.append("blocker cleared (blocker_summary + blocked_by)")
+
+    if args.phase is not None:
+        updates["lifecycle.current_phase"] = args.phase
+        log_changes.append(f"phase updated to: {args.phase}")
 
     if not updates:
         print("Error: No changes specified. Use --help to see available options.", file=sys.stderr)
@@ -191,7 +196,6 @@ def cmd_room_show(args):
     room = state.get("room", {})
     context = state.get("context", {})
     lifecycle = state.get("lifecycle", {})
-    assignments = state.get("assignments", {})
 
     print(f"Room: {room.get('id', '')}")
     print(f"  Name:    {room.get('name', '')}")
@@ -236,11 +240,36 @@ def cmd_room_show(args):
     print(f"  Blocker summary:   {lifecycle.get('blocker_summary', '') or '(none)'}")
     print(f"  Blocked by:        {lifecycle.get('blocked_by') or '(none)'}")
 
+    # Derived handoff summary
     print()
-    print("Assignments: (derived)")
-    print(f"  Owner:     {assignments.get('owner') or '(none)'}")
-    reviewers = assignments.get("reviewers") or []
-    if reviewers:
-        print(f"  Reviewers: {', '.join(str(r) for r in reviewers)}")
+    print("Handoff Summary (derived):")
+    handoffs, parse_errors = scan_room_handoffs(room_id)
+
+    if parse_errors:
+        print(f"  WARNING: {len(parse_errors)} handoff file(s) could not be parsed: {', '.join(parse_errors)}")
+        print(f"  Summary below may be incomplete.")
+        print()
+
+    if not handoffs and not parse_errors:
+        print("  No handoffs found for this room.")
+    elif not handoffs and parse_errors:
+        pass  # warning already printed, no valid handoffs to show
     else:
-        print(f"  Reviewers: (none)")
+        status_groups = {}
+        for ho_state in handoffs:
+            h = ho_state.get("handoff", {})
+            s = h.get("status", "unknown")
+            ho_id = h.get("id", "?")
+            status_groups.setdefault(s, []).append(ho_id)
+
+        for status in ["open", "claimed", "blocked", "completed"]:
+            ids = status_groups.get(status, [])
+            if ids:
+                print(f"  {status}: {len(ids)} — {', '.join(ids)}")
+            else:
+                print(f"  {status}: 0")
+
+        # Show any unexpected statuses
+        for status, ids in status_groups.items():
+            if status not in ("open", "claimed", "blocked", "completed"):
+                print(f"  {status}: {len(ids)} — {', '.join(ids)}")

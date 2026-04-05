@@ -16,7 +16,7 @@ A room is a durable workspace for a single task or conversation thread. When the
 
 Each room lives at `.orchestrator/rooms/<room-id>/` and contains exactly two files:
 
-- **`state.yaml`** — The authoritative state for the room. Tracks goal, status, phase, constraints, and acceptance criteria. The `assignments` section is a derived view (populated from active handoffs), not manually set. This file is the source of truth for room lifecycle; tools and automation read and write it. Room state includes operational memory fields (`request_summary`, `current_summary`, `open_questions`, `blocker_summary`) that hold broad CTO-level context. These fields are authoritative and manually maintained — they are not derived from other state. Room memory fields are updated explicitly via `orchctl room memory`. Each update records changes in the room log and updates `room.updated_at`. There is no automatic memory synchronization in v0 — all updates are manual.
+- **`state.yaml`** — The authoritative state for the room. Tracks goal, status, phase, constraints, and acceptance criteria. This file is the source of truth for room lifecycle; tools and automation read and write it. Room state includes operational memory fields (`request_summary`, `current_summary`, `open_questions`, `blocker_summary`) that hold broad CTO-level context. These fields are authoritative and manually maintained — they are not derived from other state. Room memory fields are updated explicitly via `orchctl room memory`. Each update records changes in the room log and updates `room.updated_at`. There is no automatic memory synchronization in v0 — all updates are manual. Room state stores authoritative broad context only. Handoff delegation summary is derived at render time by scanning handoff files — it is never stored in room state. `lifecycle.current_phase` is a manual field updated explicitly via `orchctl room memory --phase`; handoff transitions do not modify it.
 - **`log.md`** — An append-only activity log. Each entry records a timestamp, actor, and action summary. Never edited retroactively. Human-readable summary of what happened and why.
 
 Rooms are cheap to create and should be created liberally — one per distinct task or concern. They are archived, not deleted.
@@ -100,10 +100,9 @@ This section documents which file is the source of truth for each concern. When 
 
 | Concern | Authoritative Source | Notes |
 |---|---|---|
-| Room lifecycle (status, phase, goal, constraints, acceptance criteria) | `rooms/<id>/state.yaml` | The single source of truth for a room's current state. |
-| Delegation lifecycle (who is doing what, handoff status) | `handoffs/<id>.yaml` | Each handoff is one delegation unit with its own lifecycle. |
+| Room lifecycle (status, phase, goal, constraints, acceptance criteria) | `rooms/<id>/state.yaml` | The single source of truth for a room's current state. Handoff delegation summary is derived at render time by `room show` — it is never stored in room state. |
+| Delegation lifecycle (who is doing what, handoff status) | `handoffs/<id>.yaml` | Each handoff is one delegation unit with its own lifecycle. The `to` field is the authoritative record of "who is working on this room." |
 | Program metadata (id, name, status, priority, owner) | `active_programs.yaml` | The `rooms` list within a program entry is a **derived convenience** — the true room-to-program link lives in `room.state.yaml` via `room.program_id`. |
-| Room assignment ownership | Derived from active handoffs | `room.assignments.owner` is **not** manually set. The authoritative record of "who is working on this room" is the handoff's `to` field. |
 | Peer identity and capabilities | `peer_registry.yaml` | Static metadata only. The `status` field is informational, not enforced by orchctl. |
 | Activity history | `rooms/<id>/log.md` | Append-only. Never parsed for state by tools. Exists for human review. |
 

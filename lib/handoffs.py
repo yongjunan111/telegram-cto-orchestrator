@@ -6,6 +6,33 @@ from . import storage
 from .validators import validate_slug, require_room, require_handoff, require_peer
 
 
+def scan_room_handoffs(room_id: str):
+    """Scan handoff files and return handoffs for a given room plus parse errors.
+
+    Returns (matching_handoffs, parse_error_filenames).
+    matching_handoffs: list of handoff state dicts where handoff.room_id matches.
+    parse_error_filenames: list of filenames that could not be parsed.
+    """
+    if not os.path.isdir(storage.HANDOFFS_DIR):
+        return [], []
+
+    results = []
+    errors = []
+    for fname in sorted(os.listdir(storage.HANDOFFS_DIR)):
+        if not fname.endswith(".yaml") or fname == ".gitkeep":
+            continue
+        path = os.path.join(storage.HANDOFFS_DIR, fname)
+        try:
+            state = storage.read_state(path)
+            h = state.get("handoff", {})
+            if h.get("room_id") == room_id:
+                results.append(state)
+        except Exception:
+            errors.append(fname[:-5])  # strip .yaml
+
+    return results, errors
+
+
 def cmd_handoff_create(args):
     handoff_id = args.handoff_id
     room_id = args.room
