@@ -76,7 +76,7 @@ Only the assigned peer (`handoff.to`) can transition a handoff. Reassignment is 
 
 Handoffs are managed via `orchctl handoff create|list|show|claim|block|complete`.
 
-The `orchctl handoff brief` command generates an on-demand execution brief by reading current handoff and room state. The brief is a derived worker instruction — it is not stored, not authoritative, and does not modify any state. It exists to give workers structured context without requiring them to parse raw YAML.
+The `orchctl handoff brief` command generates an on-demand execution brief by reading current handoff and room state (including room memory, discovery, and contract). The brief is a derived worker instruction — it is not stored, not authoritative, and does not modify any state. It exists to give workers structured context without requiring them to parse raw YAML.
 
 The `orchctl handoff room-memory` command generates suggested room memory updates from a terminal (blocked or completed) handoff. Like the execution brief, this is a read-only derived view — it does not modify room or handoff state. The orchestrator reviews the suggestion and applies it manually via `orchctl room memory` if appropriate.
 

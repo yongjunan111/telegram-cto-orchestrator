@@ -335,6 +335,18 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
     open_questions = _bullet_list(context.get("open_questions"))
     blocker_summary = _field(lifecycle.get("blocker_summary"))
 
+    discovery = room_state.get("discovery", {})
+
+    disc_problem = _field(discovery.get("problem_statement"))
+    disc_direction = _field(discovery.get("chosen_direction"))
+    disc_readiness = _field(discovery.get("readiness_notes"))
+    disc_facts = _bullet_list(discovery.get("confirmed_facts"))
+    disc_assumptions = _bullet_list(discovery.get("assumptions"))
+    disc_decisions = _bullet_list(discovery.get("decisions_made"))
+    disc_dependencies = _bullet_list(discovery.get("dependencies"))
+    disc_unknowns = _bullet_list(discovery.get("implementation_unknowns"))
+    disc_options = _bullet_list(discovery.get("options_considered"))
+
     room_constraints = _bullet_list(context.get("constraints"))
     room_acceptance_criteria = _bullet_list(context.get("acceptance_criteria"))
 
@@ -398,6 +410,29 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
 - **Open questions:**
 {open_questions}
 - **Blocker summary:** {blocker_summary}
+
+## Room Discovery / Planning
+- **Problem statement:** {disc_problem}
+- **Chosen direction:** {disc_direction}
+- **Readiness notes:** {disc_readiness}
+
+### Confirmed Facts
+{disc_facts}
+
+### Assumptions
+{disc_assumptions}
+
+### Options Considered
+{disc_options}
+
+### Decisions Made
+{disc_decisions}
+
+### Dependencies
+{disc_dependencies}
+
+### Implementation Unknowns
+{disc_unknowns}
 
 ## Room-Level Contract
 ### Constraints
