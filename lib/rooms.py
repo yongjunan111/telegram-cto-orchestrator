@@ -176,6 +176,111 @@ def cmd_room_contract(args):
         print(f"  - {change}")
 
 
+def cmd_room_discovery(args):
+    room_id = args.room_id
+    require_room(room_id)
+
+    # Conflict validation for list fields
+    list_conflicts = [
+        ("confirmed_facts", "clear_confirmed_facts", "--confirmed-fact", "--clear-confirmed-facts"),
+        ("assumptions", "clear_assumptions", "--assumption", "--clear-assumptions"),
+        ("options_considered", "clear_options", "--option", "--clear-options"),
+        ("decisions_made", "clear_decisions", "--decision", "--clear-decisions"),
+        ("dependencies", "clear_dependencies", "--dependency", "--clear-dependencies"),
+        ("implementation_unknowns", "clear_unknowns", "--implementation-unknown", "--clear-implementation-unknowns"),
+    ]
+
+    for attr, clear_attr, flag, clear_flag in list_conflicts:
+        if getattr(args, attr, None) is not None and getattr(args, clear_attr, False):
+            print(f"Error: {flag} and {clear_flag} cannot be used together.", file=sys.stderr)
+            sys.exit(1)
+
+    # Scalar conflict validation
+    if args.problem_statement is not None and args.clear_problem_statement:
+        print("Error: --problem-statement and --clear-problem-statement cannot be used together.", file=sys.stderr)
+        sys.exit(1)
+    if args.chosen_direction is not None and args.clear_chosen_direction:
+        print("Error: --chosen-direction and --clear-chosen-direction cannot be used together.", file=sys.stderr)
+        sys.exit(1)
+    if args.readiness_notes is not None and args.clear_readiness_notes:
+        print("Error: --readiness-notes and --clear-readiness-notes cannot be used together.", file=sys.stderr)
+        sys.exit(1)
+
+    updates = {}
+    log_changes = []
+
+    # Scalar fields
+    if args.problem_statement is not None:
+        updates["discovery.problem_statement"] = args.problem_statement
+        log_changes.append("problem_statement updated")
+    if args.clear_problem_statement:
+        updates["discovery.problem_statement"] = ""
+        log_changes.append("problem_statement cleared")
+
+    if args.chosen_direction is not None:
+        updates["discovery.chosen_direction"] = args.chosen_direction
+        log_changes.append("chosen_direction updated")
+    if args.clear_chosen_direction:
+        updates["discovery.chosen_direction"] = ""
+        log_changes.append("chosen_direction cleared")
+
+    if args.readiness_notes is not None:
+        updates["discovery.readiness_notes"] = args.readiness_notes
+        log_changes.append("readiness_notes updated")
+    if args.clear_readiness_notes:
+        updates["discovery.readiness_notes"] = ""
+        log_changes.append("readiness_notes cleared")
+
+    # List fields
+    list_fields = [
+        ("confirmed_facts", "clear_confirmed_facts", "discovery.confirmed_facts", "confirmed_facts"),
+        ("assumptions", "clear_assumptions", "discovery.assumptions", "assumptions"),
+        ("options_considered", "clear_options", "discovery.options_considered", "options_considered"),
+        ("decisions_made", "clear_decisions", "discovery.decisions_made", "decisions_made"),
+        ("dependencies", "clear_dependencies", "discovery.dependencies", "dependencies"),
+        ("implementation_unknowns", "clear_unknowns", "discovery.implementation_unknowns", "implementation_unknowns"),
+    ]
+
+    for attr, clear_attr, dotkey, label in list_fields:
+        val = getattr(args, attr, None)
+        if val is not None:
+            updates[dotkey] = val
+            log_changes.append(f"{label} set ({len(val)} items)")
+        if getattr(args, clear_attr, False):
+            updates[dotkey] = []
+            log_changes.append(f"{label} cleared")
+
+    if not updates:
+        print("Error: No changes specified. Use --help to see available options.", file=sys.stderr)
+        sys.exit(1)
+
+    # Apply updates
+    now = storage.now_iso()
+    updates["room.updated_at"] = now
+
+    state_file = storage.room_state_path(room_id)
+    state = storage.read_state(state_file)
+
+    for dotkey, value in updates.items():
+        parts = dotkey.split(".", 1)
+        section, key = parts[0], parts[1]
+        if section not in state:
+            state[section] = {}
+        state[section][key] = value
+
+    storage.write_state(state_file, state)
+
+    log_entry = (
+        f"\n## {now} — orchestrator\n"
+        f"- Room discovery updated: {', '.join(log_changes)}\n"
+    )
+    storage.append_log(storage.room_log_path(room_id), log_entry)
+
+    print(f"Room '{room_id}' discovery updated.")
+    for change in log_changes:
+        print(f"  - {change}")
+
+
 def cmd_room_create(args):
     room_id = args.room_id
     name = args.name
@@ -308,6 +413,30 @@ def cmd_room_show(args):
     print(f"  Next action:       {lifecycle.get('next_action', '') or '(none)'}")
     print(f"  Blocker summary:   {lifecycle.get('blocker_summary', '') or '(none)'}")
     print(f"  Blocked by:        {lifecycle.get('blocked_by') or '(none)'}")
+
+    # Discovery / Planning
+    discovery = state.get("discovery", {})
+    print()
+    print("Discovery / Planning:")
+    print(f"  Problem statement:  {discovery.get('problem_statement', '') or '(none)'}")
+    print(f"  Chosen direction:   {discovery.get('chosen_direction', '') or '(none)'}")
+    print(f"  Readiness notes:    {discovery.get('readiness_notes', '') or '(none)'}")
+
+    for label, key in [
+        ("Confirmed facts", "confirmed_facts"),
+        ("Assumptions", "assumptions"),
+        ("Options considered", "options_considered"),
+        ("Decisions made", "decisions_made"),
+        ("Dependencies", "dependencies"),
+        ("Implementation unknowns", "implementation_unknowns"),
+    ]:
+        items = discovery.get(key) or []
+        if items:
+            print(f"  {label}:")
+            for item in items:
+                print(f"    - {item}")
+        else:
+            print(f"  {label + ':':22s} (none)")
 
     # Derived handoff summary
     print()

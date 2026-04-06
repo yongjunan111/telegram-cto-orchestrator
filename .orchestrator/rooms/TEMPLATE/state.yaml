@@ -23,3 +23,14 @@ lifecycle:
   next_action: ""
   blocker_summary: ""        # human-readable summary of current blockers
   blocked_by: null
+
+discovery:
+  problem_statement: ""
+  confirmed_facts: []
+  assumptions: []
+  options_considered: []
+  decisions_made: []
+  dependencies: []
+  implementation_unknowns: []
+  chosen_direction: ""
+  readiness_notes: ""

@@ -192,6 +192,7 @@ Run `orchctl` through the project venv:
 | `handoff rework <id> --by <peer-id> [--to <peer-id>]` | Create follow-up handoff from a changes_requested review |
 | `room memory <id> [options]` | Update room operational memory fields; use `--phase <phase>` to set lifecycle phase manually |
 | `room contract <id> [options]` | Set room-level constraints and acceptance criteria (positive spec); use `--constraint`, `--acceptance-criterion`, `--clear-constraints`, `--clear-acceptance-criteria` |
+| `room discovery <id> [options]` | Update room discovery/planning artifacts |
 
 ---
 

@@ -227,6 +227,8 @@ Every request the orchestrator receives passes through this flow:
 
 **Room memory vs. room contract**: Room memory (`request_summary`, `current_summary`, `open_questions`, `blocker_summary`) and room contract (`constraints`, `acceptance_criteria`) are distinct concerns. Memory tracks situational context — the evolving "what is happening" picture the orchestrator maintains as work progresses. Contract defines room-wide boundaries and definition of done — the "what must be true" specification that constrains all work done in this room. Both are authoritative fields in room state, managed via separate commands (`orchctl room memory` and `orchctl room contract`). Memory is updated frequently as context evolves; contract is set at room planning time and changes infrequently. Handoff briefs surface both: room memory provides worker situational context, room contract provides room-wide positive spec that task-level specs must satisfy.
 
+Room state includes three distinct concern layers: **memory** (`request_summary`, `current_summary`, `open_questions`, `blocker_summary`) for situational context, **contract** (`constraints`, `acceptance_criteria`) for normative spec, and **discovery** (`problem_statement`, `confirmed_facts`, `assumptions`, `options_considered`, `decisions_made`, `dependencies`, `implementation_unknowns`, `chosen_direction`, `readiness_notes`) for pre-handoff planning artifacts. Each is managed via its own command (`room memory`, `room contract`, `room discovery`) and serves a distinct role in the orchestration lifecycle.
+
 ---
 
 ## Related Documents
