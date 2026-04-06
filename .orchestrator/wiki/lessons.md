@@ -29,8 +29,9 @@ This file records repeated mistakes and the fixes they imply.
 
 ## The Next Problem Moves Upstream
 
-- After evidence/review/rework became stronger, the bottleneck moved earlier.
-- We are now weaker in discovery/scoping than in execution/review.
+- After evidence/review/rework became stronger, the bottleneck moved to discovery/scoping.
+- After discovery artifacts were added, the bottleneck moved again — now to readiness assessment and brief integration.
+- Each time a layer is built, look one step earlier in the lifecycle for the next gap.
 
 ## Use Explicit Mappings For Gates
 
@@ -42,3 +43,9 @@ This file records repeated mistakes and the fixes they imply.
 
 - The wiki helps survive compression and session restart.
 - But it must never replace code, YAML state, or git history as source of truth.
+
+## Separate Product Features From Session Tooling
+
+- The wiki is session tooling, not a product feature exposed through orchctl.
+- Adding wiki read/write as CLI commands (rather than direct file edits) would blur the boundary between orchestrator state and operating notes.
+- Rule: session tooling lives in `.orchestrator/wiki/` as plain files; product features live in orchctl commands backed by authoritative YAML.

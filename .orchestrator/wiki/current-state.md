@@ -35,6 +35,8 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
 - `3a69050` review authority enforcement
 - `caf9cc7` structured rework deltas
 - `2b1b529` acceptance criteria coverage gate
+- `30cf4da` room discovery planning artifacts
+- `35e92cf` session wiki protocol and operating knowledge layer
 
 ## Current Shape Of The System
 
@@ -45,8 +47,12 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
   - review
   - approval gate
   - structured rework
-- The strongest parts are execution-after-contract, evidence capture, and approval gating.
-- The weakest part is still pre-handoff discovery/scoping and the accumulation of planning knowledge.
+- Room state has three distinct concern layers:
+  - **memory** (`request_summary`, `current_summary`, `open_questions`, `blocker_summary`) — situational context
+  - **contract** (`constraints`, `acceptance_criteria`) — normative spec
+  - **discovery** (`problem_statement`, `confirmed_facts`, `assumptions`, `options_considered`, `decisions_made`, `dependencies`, `implementation_unknowns`, `chosen_direction`, `readiness_notes`) — pre-handoff planning artifacts
+- The strongest parts are execution-after-contract, evidence capture, approval gating, and the discovery planning layer.
+- The weakest part is bridging discovery artifacts into the handoff brief (discovery-aware brief) and pre-handoff readiness assessment.
 
 ## Wiki Layer Status
 
@@ -57,17 +63,14 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
 
 ## Current Bottleneck
 
-- Discovery/scoping conversations still live mostly in chat and operator memory.
-- We can structure execution well after a handoff exists.
-- We are weaker at deciding when something is ready for:
-  - room creation
-  - discovery handoff
-  - implementation handoff
+- Discovery artifacts now exist in room state, but the handoff brief does not yet read them.
+- There is no formal readiness assessment before issuing an implementation handoff.
+- We can structure execution well once a handoff exists; the gap is now the handoff creation decision.
 
 ## Next Priority
 
-- Add a discovery/scoping layer that turns user ↔ CTO clarification into persistent artifacts.
-- Keep it conservative: compile planning knowledge into artifacts before inventing new lifecycle objects.
+- Readiness packet: a pre-handoff readiness assessment that reads room discovery artifacts and surfaces whether the room is ready for an implementation handoff.
+- Discovery-aware brief: update `handoff brief` to read the room's discovery section and surface relevant planning context to the worker.
 
 ## How To Use This File
 

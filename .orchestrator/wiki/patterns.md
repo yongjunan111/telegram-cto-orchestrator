@@ -10,11 +10,12 @@ Every serious worker prompt should explicitly include:
 - non-goals
 - invariants
 - failure examples
-- validation or coverage expectations
+- validation steps with explicit coverage expectations (one coverage item per validation step)
+- acceptance criteria with explicit coverage expectations (one coverage item per criterion, at both task and room level)
 - explicit “do not change” boundaries
 - concrete verification cases
 
-Reason: worker quality improves sharply when boundaries are explicit instead of implied.
+Reason: worker quality improves sharply when boundaries are explicit instead of implied. Explicit coverage mappings are required for approval-gated handoffs — workers should know this before they start.
 
 ## Review Pattern
 

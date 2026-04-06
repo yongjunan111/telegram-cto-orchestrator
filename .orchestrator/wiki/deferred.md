@@ -9,7 +9,9 @@ This file records decisions to intentionally postpone work.
 
 ## Not Yet Built
 
-- Discovery/scoping artifact layer before handoff.
+- Readiness packet: pre-handoff readiness assessment that reads discovery artifacts and determines whether a room is ready for implementation handoff.
+- Discovery-aware brief: `handoff brief` does not yet read the room discovery section; discovery context is not surfaced to workers.
+- Handoff kind specialization: discovery handoff vs implementation handoff as distinct types with different brief/review logic.
 - Readiness rules for:
   - room creation
   - discovery handoff

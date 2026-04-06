@@ -49,8 +49,17 @@ It is not the source of truth; it is the design rationale layer.
 - `handoff task` stores task-level positive and negative spec.
 - Reason: memory answers “what is happening”; contract answers “what must be true”.
 
-## Discovery Is The Next Missing Layer
+## Room State Has Three Distinct Concern Layers
 
-- Execution-after-handoff is already well structured.
-- Discovery/scoping before handoff is still under-artifacted.
-- Reason: current friction is no longer evidence/review quality; it is pre-handoff clarification and readiness.
+- Room state separates memory, contract, and discovery into distinct sections, each with its own command.
+- Memory (`room memory`): evolving situational context — what is happening right now.
+- Contract (`room contract`): normative spec — what must be true for the room to be done.
+- Discovery (`room discovery`): pre-handoff planning artifacts — what we know, what we assume, what we decided, and whether we are ready.
+- Reason: mixing situational context, normative spec, and planning artifacts into a single section made each concern harder to maintain and surface to workers.
+
+## Discovery Artifacts Are Stored, But Brief Integration Is Still Missing
+
+- Room discovery artifacts exist and are writable via `orchctl room discovery`.
+- The handoff brief does not yet read the discovery section; it surfaces memory and contract only.
+- A formal readiness assessment before implementation handoff does not yet exist.
+- Reason: discovery was the first layer to build; readiness/brief integration is the next gap, not discovery storage itself.
