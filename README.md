@@ -21,6 +21,17 @@ Isolated workspaces for tasks or conversations. Each room lives in `.orchestrato
 
 Room state includes operational memory fields (request summary, current summary, open questions, blocker summary) that give the orchestrator broad context for triage and delegation.
 
+### Session Wiki
+The repo keeps a non-authoritative compiled wiki under `.orchestrator/wiki/`. Use it to preserve current state, design decisions, deferred work, recurring patterns, and lessons across session compression and runtime/model changes.
+
+- `.orchestrator/wiki/current-state.md`
+- `.orchestrator/wiki/decisions.md`
+- `.orchestrator/wiki/deferred.md`
+- `.orchestrator/wiki/patterns.md`
+- `.orchestrator/wiki/lessons.md`
+
+The wiki is an operating knowledge layer only. Code, YAML state, and git history remain the source of truth.
+
 ### Programs
 Active work items tracked in `.orchestrator/active_programs.yaml`. A program is a named unit of work that spans one or more rooms and has an owner, priority, and status. The `rooms` list within a program entry is a derived convenience — the true room-to-program link lives in each room's `state.yaml` via `program_id`.
 
