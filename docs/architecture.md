@@ -231,6 +231,8 @@ Every request the orchestrator receives passes through this flow:
 
 Room state includes three distinct concern layers: **memory** (`request_summary`, `current_summary`, `open_questions`, `blocker_summary`) for situational context, **contract** (`constraints`, `acceptance_criteria`) for normative spec, and **discovery** (`problem_statement`, `confirmed_facts`, `assumptions`, `options_considered`, `decisions_made`, `dependencies`, `implementation_unknowns`, `chosen_direction`, `readiness_notes`) for pre-handoff planning artifacts. Each is managed via its own command (`room memory`, `room contract`, `room discovery`) and serves a distinct role in the orchestration lifecycle.
 
+`orchctl room readiness` generates a derived read-only assessment by reading room state and scanning handoff files. It recommends a next action (`clarify_in_room`, `create_discovery_handoff`, `create_implementation_handoff`, `wait_on_active_handoff`, `review_completed_handoff`, `create_rework_handoff`) with deterministic reasons. It does not modify state.
+
 ---
 
 ## Related Documents

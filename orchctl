@@ -5,6 +5,7 @@ import argparse
 import sys
 
 from lib.rooms import cmd_room_create, cmd_room_list, cmd_room_show, cmd_room_memory, cmd_room_contract, cmd_room_discovery
+from lib.readiness import cmd_room_readiness
 from lib.handoffs import (
     cmd_handoff_create, cmd_handoff_list, cmd_handoff_show,
     cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
@@ -113,6 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
     rdisc_p.add_argument("--clear-readiness-notes", action="store_true", default=False, dest="clear_readiness_notes")
 
     rdisc_p.set_defaults(func=cmd_room_discovery)
+
+    # room readiness
+    rready_p = room_sub.add_parser("readiness", help="Assess room readiness for next action")
+    rready_p.add_argument("room_id", metavar="<room-id>")
+    rready_p.set_defaults(func=cmd_room_readiness)
 
     # log subcommand
     log_p = sub.add_parser("log", help="Log management commands")
