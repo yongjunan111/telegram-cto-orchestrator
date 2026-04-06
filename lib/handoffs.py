@@ -850,6 +850,71 @@ def cmd_handoff_review(args):
 
 
 # ---------------------------------------------------------------------------
+# review authority helpers
+# ---------------------------------------------------------------------------
+
+def _load_peer(peer_id: str) -> dict:
+    """Load peer entry from registry. Returns the peer dict or exits with error."""
+    if not os.path.isfile(storage.PEER_REGISTRY_PATH):
+        print(f"Error: peer_registry.yaml not found.", file=sys.stderr)
+        sys.exit(1)
+
+    reg = storage.read_state(storage.PEER_REGISTRY_PATH)
+    peers = reg.get("peers") or []
+    for p in peers:
+        if isinstance(p, dict) and p.get("id") == peer_id:
+            return p
+
+    print(f"Error: peer '{peer_id}' not found in peer_registry.yaml.", file=sys.stderr)
+    sys.exit(1)
+
+
+def _enforce_review_authority(handoff_state: dict, reviewer_id: str, action_name: str) -> None:
+    """Enforce review authority: reviewer type + no self-review.
+
+    Exits with error if:
+    - Peer not found
+    - Peer type is not 'reviewer'
+    - Reviewer is the handoff assignee (handoff.to)
+    - Reviewer is the completer (resolution.completed_by)
+    """
+    from .validators import validate_slug
+    validate_slug(reviewer_id, "peer_id")
+
+    peer = _load_peer(reviewer_id)
+
+    peer_type = peer.get("type", "")
+    if peer_type != "reviewer":
+        print(
+            f"Error: Peer '{reviewer_id}' has type '{peer_type}'. "
+            f"Only peers with type 'reviewer' can {action_name}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    h = handoff_state.get("handoff", {})
+    resolution = handoff_state.get("resolution", {})
+
+    assignee = h.get("to", "")
+    if reviewer_id == assignee:
+        print(
+            f"Error: Peer '{reviewer_id}' is the assignee of this handoff. "
+            f"Self-review is not allowed.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    completed_by = resolution.get("completed_by", "")
+    if completed_by and reviewer_id == completed_by:
+        print(
+            f"Error: Peer '{reviewer_id}' completed this handoff. "
+            f"Self-review is not allowed.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # review outcome
 # ---------------------------------------------------------------------------
 
@@ -858,8 +923,8 @@ def cmd_handoff_approve(args):
     reviewer = args.by
     note = args.note or ""
 
-    require_peer(reviewer)
     handoff_state, room_state = _load_handoff_with_room(handoff_id)
+    _enforce_review_authority(handoff_state, reviewer, "approve")
 
     status = handoff_state.get("handoff", {}).get("status", "")
     if status != "completed":
@@ -933,8 +998,8 @@ def cmd_handoff_request_changes(args):
     reviewer = args.by
     note = args.note
 
-    require_peer(reviewer)
     handoff_state, room_state = _load_handoff_with_room(handoff_id)
+    _enforce_review_authority(handoff_state, reviewer, "request changes")
 
     status = handoff_state.get("handoff", {}).get("status", "")
     if status != "completed":

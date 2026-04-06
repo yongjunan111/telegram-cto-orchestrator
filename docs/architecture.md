@@ -90,6 +90,8 @@ When `task.validation` defines a contract, `handoff complete` accepts `--validat
 
 Review outcomes (`approved` or `changes_requested`) are recorded in the handoff's `review` section via `orchctl handoff approve` or `orchctl handoff request-changes`. The handoff status remains `completed` — the review outcome is a separate concern. Each handoff can be reviewed once; re-review is not supported in v0.
 
+Review authority is separated from execution authority. Only peers with `type: reviewer` in the peer registry can record review outcomes. The handoff assignee (`handoff.to`) and the peer who completed the handoff (`resolution.completed_by`) cannot review the same handoff — self-review is disallowed. This ensures review is an independent control point, not a rubber-stamp by the executor.
+
 `completed` indicates the worker has submitted results; `approved` indicates those results passed review. Downstream propagation (room memory suggestions) is approval-gated: only approved completions are eligible for room context updates. Review state is derived at render time from `handoff.status` and `review.outcome` — it is never stored as a separate field.
 
 When a review records `changes_requested`, the orchestrator creates a new rework handoff via `orchctl handoff rework` rather than reopening the original. This preserves the completed handoff's history and review record intact. The rework handoff inherits the original task contract, scope, and constraints, and includes the review feedback in its task description. Lineage is recorded via `handoff.rework_of`.
