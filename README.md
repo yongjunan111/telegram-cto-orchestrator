@@ -159,6 +159,15 @@ Run `orchctl` through the project venv:
   --summary "Auth fixed" \
   --validation-cover "1:pytest tests/test_auth.py passed" \
   --validation-cover "2:manual login flow verified"
+
+# Complete with explicit acceptance criteria coverage (required when task or room acceptance_criteria are defined)
+.venv/bin/python orchctl handoff complete fix-auth-bug \
+  --by backend-worker \
+  --summary "Auth fixed" \
+  --task-criterion-cover "1:Verified 401 returned for expired tokens in test suite" \
+  --task-criterion-cover "2:Refresh flow tested end-to-end" \
+  --room-criterion-cover "1:All auth endpoints checked for 401/403 responses" \
+  --room-criterion-cover "2:Token refresh confirmed working"
 ```
 
 ### Supported Commands
@@ -174,7 +183,7 @@ Run `orchctl` through the project venv:
 | `handoff show <id>` | Display full handoff details |
 | `handoff claim <id> --by <peer-id>` | Claim an open handoff (open → claimed) |
 | `handoff block <id> --by <peer-id> --reason "..."` | Block a claimed handoff (claimed → blocked) |
-| `handoff complete <id> --by ... --summary ... [evidence opts]` | Complete a claimed handoff (claimed → completed) |
+| `handoff complete <id> --by ... --summary ... [evidence opts]` | Complete a claimed handoff (claimed → completed); use `--task-criterion-cover <index>:<evidence>` and `--room-criterion-cover <index>:<evidence>` to map each acceptance criterion to evidence (required for approval when criteria are defined) |
 | `handoff brief <id>` | Generate a derived execution brief for workers |
 | `handoff room-memory <id>` | Suggest room memory updates from a terminal handoff (`handoff list` shows both execution status and review state; `handoff room-memory` suggestions are approval-gated — completion results are not propagated to room context until explicitly approved) |
 | `handoff review <id>` | Review completion evidence for a completed handoff (contract-aware: surfaces validation, invariant, non-goal, and failure-mode prompts when a task contract is defined) |

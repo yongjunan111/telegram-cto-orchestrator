@@ -296,6 +296,12 @@ def _build_verification(task_criteria, room_criteria, task_validation=None) -> s
         lines.append("- Explanation of approach taken")
         lines.append("")
 
+    if task_criteria or room_criteria:
+        lines.append("**Acceptance criteria coverage required:**")
+        lines.append("- Use `--task-criterion-cover <index>:<evidence>` for each task criterion")
+        lines.append("- Use `--room-criterion-cover <index>:<evidence>` for each room criterion")
+        lines.append("")
+
     # Always include these baseline items
     lines.append("**In all cases, also report:**")
     lines.append("- List of files created or modified")
@@ -643,6 +649,33 @@ def _build_review_signals(task, resolution, room_context, room_lifecycle):
         else:
             signals.append(("NOTE", f"All {len(task_validation_steps)} validation step(s) have explicit coverage recorded — reviewer should verify adequacy"))
 
+    # Acceptance criteria coverage signals
+    acc_coverage = resolution.get("acceptance_coverage") or {}
+    task_acc_cov = acc_coverage.get("task") or []
+    room_acc_cov = acc_coverage.get("room") or []
+    task_criteria_list = task.get("acceptance_criteria") or []
+    room_criteria_list = room_context.get("acceptance_criteria") or []
+
+    if task_criteria_list:
+        covered_task_indices = set(c.get("criterion_index") for c in task_acc_cov)
+        uncovered_task = sum(1 for i in range(1, len(task_criteria_list) + 1) if i not in covered_task_indices)
+        if not task_acc_cov:
+            signals.append(("WARNING", f"Task acceptance criteria define {len(task_criteria_list)} item(s) but no coverage was recorded"))
+        elif uncovered_task > 0:
+            signals.append(("WARNING", f"{uncovered_task} of {len(task_criteria_list)} task acceptance criteria remain uncovered"))
+        else:
+            signals.append(("NOTE", f"All {len(task_criteria_list)} task acceptance criteria have explicit coverage — reviewer should verify adequacy"))
+
+    if room_criteria_list:
+        covered_room_indices = set(c.get("criterion_index") for c in room_acc_cov)
+        uncovered_room = sum(1 for i in range(1, len(room_criteria_list) + 1) if i not in covered_room_indices)
+        if not room_acc_cov:
+            signals.append(("WARNING", f"Room acceptance criteria define {len(room_criteria_list)} item(s) but no coverage was recorded"))
+        elif uncovered_room > 0:
+            signals.append(("WARNING", f"{uncovered_room} of {len(room_criteria_list)} room acceptance criteria remain uncovered"))
+        else:
+            signals.append(("NOTE", f"All {len(room_criteria_list)} room acceptance criteria have explicit coverage — reviewer should verify adequacy"))
+
     # Invariants
     if invariants:
         signals.append(("NOTE", f"{len(invariants)} invariant(s) defined — reviewer should verify these were preserved"))
@@ -766,6 +799,44 @@ def _render_review(handoff_state, room_state):
     else:
         validation_coverage_text = "No validation contract defined."
 
+    # Build acceptance coverage display
+    acc_coverage = resolution.get("acceptance_coverage") or {}
+    task_acc_cov = acc_coverage.get("task") or []
+    room_acc_cov = acc_coverage.get("room") or []
+    task_criteria_raw = task.get("acceptance_criteria") or []
+    room_criteria_raw = context.get("acceptance_criteria") or []
+
+    acc_cov_lines = []
+
+    if task_criteria_raw:
+        acc_cov_lines.append("### Task-Level")
+        for i, criterion in enumerate(task_criteria_raw, 1):
+            covers = [c for c in task_acc_cov if c.get("criterion_index") == i]
+            acc_cov_lines.append(f"**[{i}]** {criterion}")
+            if covers:
+                for c in covers:
+                    acc_cov_lines.append(f"  - Covered by: {c.get('evidence', '(no evidence)')}")
+            else:
+                acc_cov_lines.append(f"  - **UNCOVERED**")
+        acc_cov_lines.append("")
+
+    if room_criteria_raw:
+        acc_cov_lines.append("### Room-Level")
+        for i, criterion in enumerate(room_criteria_raw, 1):
+            covers = [c for c in room_acc_cov if c.get("criterion_index") == i]
+            acc_cov_lines.append(f"**[{i}]** {criterion}")
+            if covers:
+                for c in covers:
+                    acc_cov_lines.append(f"  - Covered by: {c.get('evidence', '(no evidence)')}")
+            else:
+                acc_cov_lines.append(f"  - **UNCOVERED**")
+        acc_cov_lines.append("")
+
+    if acc_cov_lines:
+        acceptance_coverage_text = "\n".join(acc_cov_lines)
+    else:
+        acceptance_coverage_text = "No acceptance criteria defined."
+
     # Review outcome (if already reviewed)
     review = handoff_state.get("review", {})
     if review.get("outcome"):
@@ -854,6 +925,9 @@ Not yet reviewed."""
 
 ## Validation Coverage
 {validation_coverage_text}
+
+## Acceptance Coverage
+{acceptance_coverage_text}
 {review_section}
 
 ---
@@ -993,6 +1067,53 @@ def cmd_handoff_approve(args):
         if uncovered:
             print(
                 f"Error: Cannot approve — {len(uncovered)} validation step(s) remain uncovered:",
+                file=sys.stderr,
+            )
+            for idx, text in uncovered:
+                print(f"  [{idx}] {text}", file=sys.stderr)
+            sys.exit(1)
+
+    # Acceptance criteria coverage gate
+    task_criteria = handoff_state.get("task", {}).get("acceptance_criteria") or []
+    room_criteria = room_state.get("context", {}).get("acceptance_criteria") or []
+    acc_coverage = handoff_state.get("resolution", {}).get("acceptance_coverage") or {}
+
+    if task_criteria:
+        task_cov = acc_coverage.get("task") or []
+        covered_indices = set(c.get("criterion_index") for c in task_cov)
+        uncovered = [(i, task_criteria[i - 1]) for i in range(1, len(task_criteria) + 1) if i not in covered_indices]
+
+        if not task_cov:
+            print(
+                f"Error: Cannot approve — task acceptance criteria define {len(task_criteria)} item(s) "
+                f"but no coverage was recorded.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if uncovered:
+            print(
+                f"Error: Cannot approve — {len(uncovered)} task acceptance criteria remain uncovered:",
+                file=sys.stderr,
+            )
+            for idx, text in uncovered:
+                print(f"  [{idx}] {text}", file=sys.stderr)
+            sys.exit(1)
+
+    if room_criteria:
+        room_cov = acc_coverage.get("room") or []
+        covered_indices = set(c.get("criterion_index") for c in room_cov)
+        uncovered = [(i, room_criteria[i - 1]) for i in range(1, len(room_criteria) + 1) if i not in covered_indices]
+
+        if not room_cov:
+            print(
+                f"Error: Cannot approve — room acceptance criteria define {len(room_criteria)} item(s) "
+                f"but no coverage was recorded.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if uncovered:
+            print(
+                f"Error: Cannot approve — {len(uncovered)} room acceptance criteria remain uncovered:",
                 file=sys.stderr,
             )
             for idx, text in uncovered:
@@ -1321,12 +1442,25 @@ def cmd_handoff_complete(args):
     verifications = args.verifications or []
     risks = args.risks or []
     validation_covers = args.validation_covers or []
+    task_criterion_covers = args.task_criterion_covers or []
+    room_criterion_covers = args.room_criterion_covers or []
 
     require_peer(peer_id)
     state = _load_handoff(handoff_id)
     current = state.get("handoff", {}).get("status", "")
     _assert_transition(current, "completed")
     _assert_assignee(state, peer_id, handoff_id)
+
+    # Load room state for room-level criteria validation
+    room_id = state.get("handoff", {}).get("room_id")
+    room_state = {}
+    if room_id:
+        room_state_path = storage.room_state_path(room_id)
+        if os.path.isfile(room_state_path):
+            try:
+                room_state = storage.read_state(room_state_path)
+            except Exception:
+                pass
 
     # Parse and validate coverage
     task_validation = state.get("task", {}).get("validation") or []
@@ -1368,12 +1502,68 @@ def cmd_handoff_complete(args):
                 "evidence": evidence.strip(),
             })
 
+    # Parse and validate task criterion covers
+    task_criteria = state.get("task", {}).get("acceptance_criteria") or []
+    room_criteria = room_state.get("context", {}).get("acceptance_criteria") or []
+
+    parsed_task_cov = []
+    if task_criterion_covers:
+        if not task_criteria:
+            print("Error: --task-criterion-cover specified but handoff has no task.acceptance_criteria.", file=sys.stderr)
+            sys.exit(1)
+        for tc in task_criterion_covers:
+            if ":" not in tc:
+                print(f"Error: Invalid --task-criterion-cover format: '{tc}'. Expected '<index>:<evidence>'.", file=sys.stderr)
+                sys.exit(1)
+            idx_str, evidence = tc.split(":", 1)
+            try:
+                idx = int(idx_str)
+            except ValueError:
+                print(f"Error: Invalid task criterion index: '{idx_str}'.", file=sys.stderr)
+                sys.exit(1)
+            if idx < 1 or idx > len(task_criteria):
+                print(f"Error: Task criterion index {idx} out of range. Valid: 1-{len(task_criteria)}.", file=sys.stderr)
+                sys.exit(1)
+            parsed_task_cov.append({
+                "criterion_index": idx,
+                "criterion_text": task_criteria[idx - 1],
+                "evidence": evidence.strip(),
+            })
+
+    parsed_room_cov = []
+    if room_criterion_covers:
+        if not room_criteria:
+            print("Error: --room-criterion-cover specified but room has no acceptance_criteria.", file=sys.stderr)
+            sys.exit(1)
+        for rc in room_criterion_covers:
+            if ":" not in rc:
+                print(f"Error: Invalid --room-criterion-cover format: '{rc}'. Expected '<index>:<evidence>'.", file=sys.stderr)
+                sys.exit(1)
+            idx_str, evidence = rc.split(":", 1)
+            try:
+                idx = int(idx_str)
+            except ValueError:
+                print(f"Error: Invalid room criterion index: '{idx_str}'.", file=sys.stderr)
+                sys.exit(1)
+            if idx < 1 or idx > len(room_criteria):
+                print(f"Error: Room criterion index {idx} out of range. Valid: 1-{len(room_criteria)}.", file=sys.stderr)
+                sys.exit(1)
+            parsed_room_cov.append({
+                "criterion_index": idx,
+                "criterion_text": room_criteria[idx - 1],
+                "evidence": evidence.strip(),
+            })
+
     now = storage.now_iso()
 
     # Set validation coverage before transition write
     if "resolution" not in state:
         state["resolution"] = {}
     state["resolution"]["validation_coverage"] = parsed_coverage
+    state["resolution"]["acceptance_coverage"] = {
+        "task": parsed_task_cov,
+        "room": parsed_room_cov,
+    }
 
     _write_transition(handoff_id, state, {
         "handoff.status": "completed",

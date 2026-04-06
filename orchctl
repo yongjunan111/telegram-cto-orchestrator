@@ -163,6 +163,10 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Remaining risk or deferred item (repeatable)")
     hcomplete_p.add_argument("--validation-cover", action="append", default=None, dest="validation_covers",
                              help="Cover a validation step: '<index>:<evidence>' (1-based, repeatable)")
+    hcomplete_p.add_argument("--task-criterion-cover", action="append", default=None, dest="task_criterion_covers",
+                             help="Cover task acceptance criterion: '<index>:<evidence>' (1-based, repeatable)")
+    hcomplete_p.add_argument("--room-criterion-cover", action="append", default=None, dest="room_criterion_covers",
+                             help="Cover room acceptance criterion: '<index>:<evidence>' (1-based, repeatable)")
     hcomplete_p.set_defaults(func=cmd_handoff_complete)
 
     # handoff brief
