@@ -96,6 +96,8 @@ Review authority is separated from execution authority. Only peers with `type: r
 
 When a review records `changes_requested`, the orchestrator creates a new rework handoff via `orchctl handoff rework` rather than reopening the original. This preserves the completed handoff's history and review record intact. The rework handoff inherits the original task contract, scope, and constraints, and includes the review feedback in its task description. Lineage is recorded via `handoff.rework_of`.
 
+Review change requests include structured `must_address` items — explicit requirements that must be addressed in rework. When `orchctl handoff rework` creates a follow-up handoff, these items are carried into a `rework` section, ensuring the structured delta survives from review to the next execution cycle. The execution brief surfaces this as a Rework Delta section.
+
 ---
 
 ## Authority Model

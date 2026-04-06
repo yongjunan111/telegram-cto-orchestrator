@@ -310,6 +310,7 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
     room = room_state.get("room", {})
     context = room_state.get("context", {})
     lifecycle = room_state.get("lifecycle", {})
+    rework_data = handoff_state.get("rework", {})
 
     handoff_id = _field(h.get("id"))
     room_id = _field(h.get("room_id"))
@@ -347,6 +348,27 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
         task.get("validation") or [],
     )
 
+    # Rework Delta (only for rework handoffs)
+    if rework_data:
+        rework_of = h.get("rework_of", "unknown")
+        rework_note = _field(rework_data.get("review_note"))
+        rework_must = rework_data.get("must_address") or []
+        if rework_must:
+            must_text = "\n".join(f"- {item}" for item in rework_must)
+        else:
+            must_text = "No structured must-address items recorded in source review"
+
+        rework_delta_section = f"""
+## Rework Delta
+- **Rework of:** {rework_of}
+- **Review note:** {rework_note}
+
+### Must Address
+{must_text}
+"""
+    else:
+        rework_delta_section = ""
+
     return f"""\
 # Execution Brief: {handoff_id}
 
@@ -356,7 +378,7 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
 - **Assigned to:** {assigned_to}
 - **Status:** {handoff_status}
 - **Priority:** {priority}
-
+{rework_delta_section}
 ## Room Context
 - **Goal:** {goal}
 - **Room status:** {room_status}
@@ -747,12 +769,17 @@ def _render_review(handoff_state, room_state):
     # Review outcome (if already reviewed)
     review = handoff_state.get("review", {})
     if review.get("outcome"):
+        must_address = review.get("must_address") or []
+        must_address_text = ""
+        if must_address:
+            must_address_text = "\n- **Must address:**\n" + "\n".join(f"  - {item}" for item in must_address)
+
         review_section = f"""
 ## Review Outcome (recorded)
 - **Outcome:** {review['outcome']}
 - **Reviewed by:** {review.get('reviewed_by', 'unknown')}
 - **Reviewed at:** {review.get('reviewed_at', 'unknown')}
-- **Note:** {review.get('note') or '(none)'}"""
+- **Note:** {review.get('note') or '(none)'}{must_address_text}"""
     else:
         review_section = """
 ## Review Outcome
@@ -997,6 +1024,7 @@ def cmd_handoff_request_changes(args):
     handoff_id = args.handoff_id
     reviewer = args.by
     note = args.note
+    must_address = args.must_address  # list, required + action=append
 
     handoff_state, room_state = _load_handoff_with_room(handoff_id)
     _enforce_review_authority(handoff_state, reviewer, "request changes")
@@ -1025,16 +1053,18 @@ def cmd_handoff_request_changes(args):
         "reviewed_by": reviewer,
         "reviewed_at": now,
         "note": note,
+        "must_address": must_address,
     }
     storage.write_state(storage.handoff_path(handoff_id), handoff_state)
 
     # Update room
     room_id = handoff_state["handoff"]["room_id"]
-    extra = f"Review: changes_requested | Note: {note}"
+    extra = f"Review: changes_requested | Note: {note} | {len(must_address)} must-address item(s)"
     _log_transition(room_id, handoff_id, reviewer, "changes_requested", extra, now)
 
     print(f"Handoff '{handoff_id}' — changes requested by '{reviewer}'.")
     print(f"  note: {note}")
+    print(f"  must-address items: {len(must_address)}")
 
 
 # ---------------------------------------------------------------------------
@@ -1098,6 +1128,7 @@ def cmd_handoff_rework(args):
 
     now = storage.now_iso()
     review_note = source_review.get("note", "")
+    must_address = source_review.get("must_address") or []
 
     # Build rework task description
     original_desc = source_task.get("description", "")
@@ -1127,6 +1158,10 @@ def cmd_handoff_rework(args):
             "failure_examples": source_task.get("failure_examples") or [],
             "validation": source_task.get("validation") or [],
         },
+        "rework": {
+            "review_note": review_note,
+            "must_address": must_address,
+        },
         "timestamps": {
             "created_at": now,
             "claimed_at": None,
@@ -1142,6 +1177,7 @@ def cmd_handoff_rework(args):
         f"- Rework handoff `{rework_id}` created from `{source_id}`\n"
         f"- Assigned to: {assignee}\n"
         f"- Reason: changes_requested by {source_review.get('reviewed_by', 'unknown')}\n"
+        f"- Must-address items: {len(must_address)}\n"
     )
     storage.append_log(storage.room_log_path(room_id), log_entry)
     storage.update_state(storage.room_state_path(room_id), {"room.updated_at": now})

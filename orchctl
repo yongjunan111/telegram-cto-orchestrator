@@ -192,6 +192,8 @@ def build_parser() -> argparse.ArgumentParser:
     hreqch_p.add_argument("handoff_id", metavar="<handoff-id>")
     hreqch_p.add_argument("--by", required=True, help="Reviewer peer ID")
     hreqch_p.add_argument("--note", required=True, help="What changes are needed")
+    hreqch_p.add_argument("--must-address", action="append", required=True, dest="must_address",
+                          help="Required change item (repeatable, at least one required)")
     hreqch_p.set_defaults(func=cmd_handoff_request_changes)
 
     # handoff rework
