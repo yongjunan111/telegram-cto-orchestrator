@@ -15,6 +15,7 @@ from lib.handoffs import (
 )
 from lib.log import cmd_log_append
 from lib.sessions import cmd_session_list, cmd_session_show, cmd_session_upsert
+from lib.dispatch import cmd_handoff_dispatch_plan
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -245,6 +246,11 @@ def build_parser() -> argparse.ArgumentParser:
     hrework_p.add_argument("--by", required=True, help="Peer requesting the rework")
     hrework_p.add_argument("--to", default=None, help="Assignee for rework (defaults to original assignee)")
     hrework_p.set_defaults(func=cmd_handoff_rework)
+
+    # handoff dispatch-plan
+    hdispatch_p = handoff_sub.add_parser("dispatch-plan", help="Derived dispatch allocation recommendation")
+    hdispatch_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hdispatch_p.set_defaults(func=cmd_handoff_dispatch_plan)
 
     # session subcommand
     session_p = sub.add_parser("session", help="Runtime session state commands")

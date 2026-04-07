@@ -104,6 +104,8 @@ Review change requests include structured `must_address` items — explicit requ
 
 Handoffs carry an optional `kind` field with values `implementation` (default) or `discovery`. This is a minimal type signal — it does not change lifecycle, review, or approval semantics. Legacy handoffs without the field are read as `implementation`.
 
+`orchctl handoff dispatch-plan` generates a derived read-only allocation recommendation by reading handoff, room, peer registry, and runtime session state. It recommends one of `fresh_session`, `reuse_existing_session`, `wait_for_existing_assignment`, or `cannot_allocate`. Default policy is fresh-per-handoff; reuse is allowed only when an existing session matches peer, room, is idle, clean, and lease-valid. The command does not modify state, launch tmux, or attach to any session.
+
 ---
 
 ## Authority Model
