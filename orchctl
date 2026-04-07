@@ -16,6 +16,7 @@ from lib.handoffs import (
 from lib.log import cmd_log_append
 from lib.sessions import cmd_session_list, cmd_session_show, cmd_session_upsert
 from lib.dispatch import cmd_handoff_dispatch_plan, cmd_handoff_dispatch
+from lib.checkpoints import cmd_session_checkpoint
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -288,6 +289,13 @@ def build_parser() -> argparse.ArgumentParser:
     supsert_p.add_argument("--lease-until", default=None, dest="lease_until")
     supsert_p.add_argument("--last-active-at", default=None, dest="last_active_at")
     supsert_p.set_defaults(func=cmd_session_upsert)
+
+    # session checkpoint
+    scheck_p = session_sub.add_parser("checkpoint", help="Create derived session checkpoint artifact")
+    scheck_p.add_argument("session_id", metavar="<session-id>")
+    scheck_p.add_argument("--event", required=True, help="Checkpoint event name (e.g. manual-checkpoint, shell-exit)")
+    scheck_p.add_argument("--note", default=None, help="Optional note")
+    scheck_p.set_defaults(func=cmd_session_checkpoint)
 
     return parser
 

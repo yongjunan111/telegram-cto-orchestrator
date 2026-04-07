@@ -1,0 +1,30 @@
+#!/bin/bash
+# Session memory hook — sourced by dispatched tmux sessions.
+# Generic helper. No provider-specific integration.
+# Do not edit manually — regenerated on dispatch.
+
+# Manual checkpoint
+orch_checkpoint() {
+    local note="$*"
+    if [ -z "$ORCH_SESSION_ID" ]; then
+        echo "orch_checkpoint: ORCH_SESSION_ID not set" >&2
+        return 1
+    fi
+    if [ -n "$note" ]; then
+        "$ORCHCTL_PYTHON" "$ORCHCTL_SCRIPT" session checkpoint "$ORCH_SESSION_ID" --event manual-checkpoint --note "$note"
+    else
+        "$ORCHCTL_PYTHON" "$ORCHCTL_SCRIPT" session checkpoint "$ORCH_SESSION_ID" --event manual-checkpoint
+    fi
+}
+
+# Pre-compact snapshot helper — save state, then user runs their own compact command
+orch_compact() {
+    orch_checkpoint "pre-compact snapshot"
+    echo "Checkpoint saved. You can now run your compact command (e.g. /compact in Claude Code)."
+}
+
+# Shell EXIT trap — idempotent
+if [ -z "$ORCH_EXIT_TRAP_SET" ]; then
+    export ORCH_EXIT_TRAP_SET=1
+    trap '"$ORCHCTL_PYTHON" "$ORCHCTL_SCRIPT" session checkpoint "$ORCH_SESSION_ID" --event shell-exit 2>/dev/null || true' EXIT
+fi

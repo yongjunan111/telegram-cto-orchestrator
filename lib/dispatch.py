@@ -410,6 +410,59 @@ def _conservative_lease(now_iso: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Session hook helpers
+# ---------------------------------------------------------------------------
+
+def _install_session_hook_file() -> str:
+    """Install the session hook template to runtime dir if not present. Return absolute path."""
+    template_src = os.path.join(os.path.dirname(__file__), "session_hooks.sh.template")
+    target_dir = os.path.join(storage.RUNTIME_DIR, "hooks")
+    target_path = os.path.join(target_dir, "session_hooks.sh")
+
+    os.makedirs(target_dir, exist_ok=True)
+
+    # Always copy fresh so template updates propagate
+    try:
+        with open(template_src) as src:
+            content = src.read()
+        with open(target_path, "w") as dst:
+            dst.write(content)
+    except Exception:
+        pass
+
+    return os.path.abspath(target_path)
+
+
+def _get_orchctl_invocation() -> tuple:
+    """Return (python_path, orchctl_path) as absolute paths."""
+    # ORCHESTRATOR_DIR is .orchestrator/; repo root is its parent
+    repo_root = os.path.dirname(os.path.abspath(storage.ORCHESTRATOR_DIR))
+    venv_python = os.path.join(repo_root, ".venv", "bin", "python")
+    orchctl_script = os.path.join(repo_root, "orchctl")
+    return venv_python, orchctl_script
+
+
+def _inject_session_hooks(tmux_name: str, session_id: str, handoff_id: str, room_id: str) -> None:
+    """Inject env vars + source hook file into a live tmux session. Best effort, idempotent."""
+    if not _tmux_session_exists(tmux_name):
+        return
+
+    hook_path = _install_session_hook_file()
+    venv_python, orchctl_script = _get_orchctl_invocation()
+
+    # Send env var exports
+    exports = (
+        f"export ORCH_SESSION_ID='{session_id}' "
+        f"ORCH_HANDOFF_ID='{handoff_id}' "
+        f"ORCH_ROOM_ID='{room_id}' "
+        f"ORCHCTL_PYTHON='{venv_python}' "
+        f"ORCHCTL_SCRIPT='{orchctl_script}'"
+    )
+    _tmux_send_keys(tmux_name, exports)
+    _tmux_send_keys(tmux_name, f"source '{hook_path}'")
+
+
+# ---------------------------------------------------------------------------
 # Dispatch execution
 # ---------------------------------------------------------------------------
 
@@ -470,6 +523,9 @@ def _execute_fresh_dispatch(
         print(f"Warning: artifact write failed: {e}", file=sys.stderr)
         artifact_path = "(failed)"
 
+    # Inject session hooks first (best effort, idempotent)
+    _inject_session_hooks(tmux_name, session_id, handoff_id, handoff_room)
+
     # Send-keys to display artifact (best effort)
     if artifact_path and artifact_path != "(failed)":
         _tmux_send_keys(tmux_name, "clear")
@@ -527,6 +583,9 @@ def _execute_reuse_dispatch(
     except Exception as e:
         print(f"Warning: artifact write failed: {e}", file=sys.stderr)
         artifact_path = "(failed)"
+
+    # Re-inject session hooks (idempotent due to ORCH_EXIT_TRAP_SET guard)
+    _inject_session_hooks(tmux_name, session_id, handoff_id, handoff_room)
 
     # Send-keys to existing session (if tmux session still exists)
     if tmux_name and _tmux_session_exists(tmux_name) and artifact_path != "(failed)":
