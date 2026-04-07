@@ -108,7 +108,9 @@ Handoffs carry an optional `kind` field with values `implementation` (default) o
 
 `orchctl handoff dispatch` executes the allocation: it creates a fresh tmux session for `fresh_session`, or updates an eligible existing session for `reuse_existing_session`. It uses the same decision logic as `dispatch-plan` so verdicts are consistent. A derived dispatch artifact is written to `.orchestrator/runtime/dispatches/<handoff-id>.md` containing the rendered brief and session metadata. The artifact is non-authoritative — the source of truth remains the handoff and room YAML state.
 
-`orchctl session checkpoint` creates a derived checkpoint artifact under `.orchestrator/runtime/checkpoints/` containing session, handoff, and room summary. Dispatched tmux sessions are injected with generic shell hooks (`orch_checkpoint`, `orch_compact`, shell EXIT trap) that call this command. Checkpoints are non-authoritative — they exist to help subsequent sessions pick up context. The hooks are generic bash and do not integrate with any specific AI provider's compact command.
+`orchctl session checkpoint` creates a derived checkpoint artifact under `.orchestrator/runtime/checkpoints/` containing session, handoff, and room summary. Dispatched tmux sessions are injected with generic shell hooks (`orch_checkpoint`, `orch_compact`, `orch_bootstrap`, shell EXIT trap) that call this command. Checkpoints are non-authoritative — they exist to help subsequent sessions pick up context. The hooks are generic bash and do not integrate with any specific AI provider's compact command.
+
+`orchctl session bootstrap` creates a derived startup packet under `.orchestrator/runtime/bootstrap/<session-id>.md` combining current session/room/handoff state with the latest relevant checkpoint. Latest checkpoint selection is deterministic: same session_id, then same handoff_id, then same room_id. `handoff dispatch` automatically runs bootstrap after injecting shell hooks and displays the artifact in the tmux session. Bootstrap failure is surfaced as a warning but does not abort dispatch.
 
 ---
 

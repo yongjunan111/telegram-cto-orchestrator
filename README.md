@@ -211,6 +211,7 @@ Run `orchctl` through the project venv:
 | `session show <id>` | Show session state |
 | `session upsert <id> [options]` | Create or update session state |
 | `session checkpoint <id> --event <event> [--note "..."]` | Create derived session checkpoint artifact |
+| `session bootstrap <id>` | Create derived session bootstrap artifact |
 
 ---
 

@@ -526,10 +526,8 @@ def _execute_fresh_dispatch(
     # Inject session hooks first (best effort, idempotent)
     _inject_session_hooks(tmux_name, session_id, handoff_id, handoff_room)
 
-    # Send-keys to display artifact (best effort)
-    if artifact_path and artifact_path != "(failed)":
-        _tmux_send_keys(tmux_name, "clear")
-        _tmux_send_keys(tmux_name, f"echo 'Dispatch artifact:' && cat {artifact_path}")
+    # Auto-read: run bootstrap and display (supersedes raw dispatch artifact display)
+    _run_bootstrap_and_display(tmux_name, session_id)
 
     return {
         "ok": True,
@@ -587,10 +585,8 @@ def _execute_reuse_dispatch(
     # Re-inject session hooks (idempotent due to ORCH_EXIT_TRAP_SET guard)
     _inject_session_hooks(tmux_name, session_id, handoff_id, handoff_room)
 
-    # Send-keys to existing session (if tmux session still exists)
-    if tmux_name and _tmux_session_exists(tmux_name) and artifact_path != "(failed)":
-        _tmux_send_keys(tmux_name, "clear")
-        _tmux_send_keys(tmux_name, f"echo 'Dispatch artifact:' && cat {artifact_path}")
+    # Auto-read: run bootstrap and display (supersedes raw dispatch artifact display)
+    _run_bootstrap_and_display(tmux_name, session_id)
 
     return {
         "ok": True,
@@ -598,6 +594,40 @@ def _execute_reuse_dispatch(
         "tmux_session": tmux_name,
         "artifact_path": artifact_path,
     }
+
+
+def _run_bootstrap_and_display(tmux_name: str, session_id: str) -> None:
+    """Run session bootstrap and cat the artifact in the tmux session.
+    Best-effort; failures do not abort dispatch.
+    """
+    venv_python, orchctl_script = _get_orchctl_invocation()
+    bootstrap_path = os.path.join(storage.RUNTIME_DIR, "bootstrap", f"{session_id}.md")
+
+    # Run bootstrap command (synchronous)
+    success = False
+    try:
+        result = subprocess.run(
+            [venv_python, orchctl_script, "session", "bootstrap", session_id],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            success = True
+        else:
+            print(f"Warning: bootstrap generation failed: {result.stderr.strip()}", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: bootstrap subprocess error: {e}", file=sys.stderr)
+
+    # Display in tmux:
+    # - success AND file exists → cat the artifact
+    # - otherwise → honest failure message, never cat a stale file
+    if not _tmux_session_exists(tmux_name):
+        return
+
+    if success and os.path.isfile(bootstrap_path):
+        _tmux_send_keys(tmux_name, "clear")
+        _tmux_send_keys(tmux_name, f"echo 'Bootstrap artifact:' && cat {bootstrap_path}")
+    else:
+        _tmux_send_keys(tmux_name, "echo 'Bootstrap artifact not available (generation failed).'")
 
 
 def _write_dispatch_artifact(handoff_state, room_state, session_id, tmux_name, target_peer, now):

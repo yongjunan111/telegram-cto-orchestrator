@@ -23,6 +23,15 @@ orch_compact() {
     echo "Checkpoint saved. You can now run your compact command (e.g. /compact in Claude Code)."
 }
 
+# Manual bootstrap — regenerate derived startup packet
+orch_bootstrap() {
+    if [ -z "$ORCH_SESSION_ID" ]; then
+        echo "orch_bootstrap: ORCH_SESSION_ID not set" >&2
+        return 1
+    fi
+    "$ORCHCTL_PYTHON" "$ORCHCTL_SCRIPT" session bootstrap "$ORCH_SESSION_ID"
+}
+
 # Shell EXIT trap — idempotent
 if [ -z "$ORCH_EXIT_TRAP_SET" ]; then
     export ORCH_EXIT_TRAP_SET=1
