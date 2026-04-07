@@ -6,6 +6,11 @@ from . import storage
 from .validators import validate_slug, require_room, require_handoff, require_peer
 
 
+def _get_handoff_kind(handoff_state: dict) -> str:
+    """Read handoff.kind with implementation fallback for legacy handoffs."""
+    return handoff_state.get("handoff", {}).get("kind") or "implementation"
+
+
 def scan_room_handoffs(room_id: str):
     """Scan handoff files and return handoffs for a given room plus parse errors.
 
@@ -77,6 +82,7 @@ def cmd_handoff_create(args):
             "to": to,
             "status": "open",
             "priority": priority,
+            "kind": args.kind,
         },
         "task": {
             "description": task_desc,
@@ -112,6 +118,7 @@ def cmd_handoff_create(args):
     print(f"  room:     {room_id}")
     print(f"  to:       {to}")
     print(f"  priority: {priority}")
+    print(f"  kind:     {args.kind}")
     print(f"  task:     {task_desc[:72]}")
 
 
@@ -140,7 +147,7 @@ def cmd_handoff_list(args):
             print("No handoffs found.")
         return
 
-    fmt = "{:<24} {:<16} {:<16} {:<10} {:<10} {:<18}"
+    fmt = "{:<22} {:<14} {:<14} {:<10} {:<9} {:<16} {:<14}"
     header_printed = False
     matched = 0
     parse_errors = 0
@@ -154,16 +161,17 @@ def cmd_handoff_list(args):
             if room_id is not None and h.get("room_id") != room_id:
                 continue
             if not header_printed:
-                print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY", "REVIEW"))
-                print("-" * 96)
+                print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY", "REVIEW", "KIND"))
+                print("-" * 105)
                 header_printed = True
-            hid = str(h.get("id") or fname[:-5])[:23]
-            room = str(h.get("room_id") or "")[:15]
-            to = str(h.get("to") or "")[:15]
+            hid = str(h.get("id") or fname[:-5])[:21]
+            room = str(h.get("room_id") or "")[:13]
+            to = str(h.get("to") or "")[:13]
             status = str(h.get("status") or "")[:9]
-            priority = str(h.get("priority") or "")[:9]
+            priority = str(h.get("priority") or "")[:8]
             review_state = _derive_review_state(state)
-            print(fmt.format(hid, room, to, status, priority, review_state))
+            kind = _get_handoff_kind(state)[:13]
+            print(fmt.format(hid, room, to, status, priority, review_state, kind))
             matched += 1
         except Exception:
             parse_errors += 1
@@ -171,10 +179,10 @@ def cmd_handoff_list(args):
             if room_id is None:
                 # Unfiltered: show inline as before
                 if not header_printed:
-                    print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY", "REVIEW"))
-                    print("-" * 96)
+                    print(fmt.format("ID", "ROOM", "TO", "STATUS", "PRIORITY", "REVIEW", "KIND"))
+                    print("-" * 105)
                     header_printed = True
-                print(fmt.format(fname[:-5], "(parse error)", "-", "-", "-", "-"))
+                print(fmt.format(fname[:-5], "(parse error)", "-", "-", "-", "-", "-"))
 
     # Post-loop output
     if room_id is not None:
@@ -323,6 +331,7 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
     assigned_to = _field(h.get("to"))
     handoff_status = _field(h.get("status"))
     priority = _field(h.get("priority"))
+    kind = _get_handoff_kind(handoff_state)
 
     goal = _field(context.get("goal"))
     room_status = _field(room.get("status"))
@@ -396,6 +405,7 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
 - **Assigned to:** {assigned_to}
 - **Status:** {handoff_status}
 - **Priority:** {priority}
+- **Kind:** {kind}
 {rework_delta_section}
 ## Room Context
 - **Goal:** {goal}
@@ -1292,6 +1302,8 @@ def cmd_handoff_rework(args):
     if review_note:
         rework_desc += f"\n\nReview feedback: {review_note}"
 
+    source_kind = _get_handoff_kind(source_state)
+
     new_state = {
         "handoff": {
             "id": rework_id,
@@ -1301,6 +1313,7 @@ def cmd_handoff_rework(args):
             "to": assignee,
             "status": "open",
             "priority": source_h.get("priority", "medium"),
+            "kind": source_kind,
             "rework_of": source_id,
         },
         "task": {

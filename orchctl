@@ -161,6 +161,8 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Task constraint (repeatable)")
     hcreate_p.add_argument("--acceptance-criterion", action="append", default=None, dest="acceptance_criteria",
                            help="Task acceptance criterion (repeatable)")
+    hcreate_p.add_argument("--kind", default="implementation", choices=["implementation", "discovery"],
+                           help="Handoff kind (default: implementation)")
     hcreate_p.set_defaults(func=cmd_handoff_create)
 
     # handoff list

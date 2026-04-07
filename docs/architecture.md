@@ -100,6 +100,8 @@ When a review records `changes_requested`, the orchestrator creates a new rework
 
 Review change requests include structured `must_address` items — explicit requirements that must be addressed in rework. When `orchctl handoff rework` creates a follow-up handoff, these items are carried into a `rework` section, ensuring the structured delta survives from review to the next execution cycle. The execution brief surfaces this as a Rework Delta section.
 
+Handoffs carry an optional `kind` field with values `implementation` (default) or `discovery`. This is a minimal type signal — it does not change lifecycle, review, or approval semantics. Legacy handoffs without the field are read as `implementation`.
+
 ---
 
 ## Authority Model

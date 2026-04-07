@@ -189,7 +189,7 @@ Run `orchctl` through the project venv:
 | `room list` | List all rooms with status and phase |
 | `room show <id>` | Display full room state |
 | `log append <id> --actor ... --message ...` | Append entry to room log |
-| `handoff create <id> --room ... --to ... --task ...` | Create a task handoff to a peer; supports `--constraint` and `--acceptance-criterion` for task-level positive spec (repeatable) |
+| `handoff create <id> --room ... --to ... --task ... [--kind implementation\|discovery]` | Create a task handoff to a peer; supports `--constraint` and `--acceptance-criterion` for task-level positive spec (repeatable); `--kind` sets handoff type (default: implementation) |
 | `handoff list [--room <room-id>]` | List handoffs, optionally filtered by room |
 | `handoff show <id>` | Display full handoff details |
 | `handoff claim <id> --by <peer-id>` | Claim an open handoff (open → claimed) |
