@@ -202,6 +202,7 @@ Run `orchctl` through the project venv:
 | `handoff request-changes <id> --by <peer-id> --note "..." --must-address "..." [--must-address "..."]` | Record change request on a completed handoff. `--must-address` is required and repeatable; each item is a specific requirement the rework must address. Same reviewer authority rules apply as for `approve`. |
 | `handoff rework <id> --by <peer-id> [--to <peer-id>]` | Create follow-up handoff from a changes_requested review |
 | `handoff dispatch-plan <id>` | Derived dispatch allocation recommendation (fresh_session / reuse_existing_session / wait_for_existing_assignment / cannot_allocate) |
+| `handoff dispatch <id>` | Execute dispatch — create fresh tmux session or reuse eligible session |
 | `room memory <id> [options]` | Update room operational memory fields; use `--phase <phase>` to set lifecycle phase manually |
 | `room contract <id> [options]` | Set room-level constraints and acceptance criteria (positive spec); use `--constraint`, `--acceptance-criterion`, `--clear-constraints`, `--clear-acceptance-criteria` |
 | `room discovery <id> [options]` | Update room discovery/planning artifacts |

@@ -15,7 +15,7 @@ from lib.handoffs import (
 )
 from lib.log import cmd_log_append
 from lib.sessions import cmd_session_list, cmd_session_show, cmd_session_upsert
-from lib.dispatch import cmd_handoff_dispatch_plan
+from lib.dispatch import cmd_handoff_dispatch_plan, cmd_handoff_dispatch
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -251,6 +251,11 @@ def build_parser() -> argparse.ArgumentParser:
     hdispatch_p = handoff_sub.add_parser("dispatch-plan", help="Derived dispatch allocation recommendation")
     hdispatch_p.add_argument("handoff_id", metavar="<handoff-id>")
     hdispatch_p.set_defaults(func=cmd_handoff_dispatch_plan)
+
+    # handoff dispatch
+    hdisp_p = handoff_sub.add_parser("dispatch", help="Execute handoff dispatch (tmux + session state)")
+    hdisp_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hdisp_p.set_defaults(func=cmd_handoff_dispatch)
 
     # session subcommand
     session_p = sub.add_parser("session", help="Runtime session state commands")

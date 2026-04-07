@@ -106,6 +106,8 @@ Handoffs carry an optional `kind` field with values `implementation` (default) o
 
 `orchctl handoff dispatch-plan` generates a derived read-only allocation recommendation by reading handoff, room, peer registry, and runtime session state. It recommends one of `fresh_session`, `reuse_existing_session`, `wait_for_existing_assignment`, or `cannot_allocate`. Default policy is fresh-per-handoff; reuse is allowed only when an existing session matches peer, room, is idle, clean, and lease-valid. The command does not modify state, launch tmux, or attach to any session.
 
+`orchctl handoff dispatch` executes the allocation: it creates a fresh tmux session for `fresh_session`, or updates an eligible existing session for `reuse_existing_session`. It uses the same decision logic as `dispatch-plan` so verdicts are consistent. A derived dispatch artifact is written to `.orchestrator/runtime/dispatches/<handoff-id>.md` containing the rendered brief and session metadata. The artifact is non-authoritative — the source of truth remains the handoff and room YAML state.
+
 ---
 
 ## Authority Model
