@@ -62,3 +62,16 @@ def require_peer(peer_id: str) -> None:
     if peer_id not in known_ids:
         print(f"Error: peer '{peer_id}' not found in peer_registry.yaml.", file=sys.stderr)
         sys.exit(1)
+
+
+VALID_SESSION_MODES = {"ephemeral", "warm", "persistent"}
+VALID_SESSION_STATUSES = {"offline", "idle", "busy"}
+
+
+def require_session(session_id: str) -> None:
+    """Exit if session does not exist."""
+    validate_slug(session_id, "session_id")
+    path = storage.session_path(session_id)
+    if not os.path.isfile(path):
+        print(f"Error: session '{session_id}' does not exist.", file=sys.stderr)
+        sys.exit(1)

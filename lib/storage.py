@@ -8,6 +8,12 @@ ROOMS_DIR = os.path.join(ORCHESTRATOR_DIR, "rooms")
 TEMPLATE_DIR = os.path.join(ROOMS_DIR, "TEMPLATE")
 HANDOFFS_DIR = os.path.join(ORCHESTRATOR_DIR, "handoffs")
 PEER_REGISTRY_PATH = os.path.join(ORCHESTRATOR_DIR, "peer_registry.yaml")
+RUNTIME_DIR = os.path.join(ORCHESTRATOR_DIR, "runtime")
+SESSIONS_DIR = os.path.join(RUNTIME_DIR, "sessions")
+
+
+def session_path(session_id: str) -> str:
+    return os.path.join(SESSIONS_DIR, f"{session_id}.yaml")
 
 
 def now_iso() -> str:

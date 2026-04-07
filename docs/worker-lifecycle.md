@@ -130,3 +130,5 @@ The following fields should eventually exist in authoritative worker state such 
 - `archive_summary`
 
 This document defines the lifecycle policy. The exact schema can evolve in later versions of the toolkit.
+
+Runtime/session state is now stored under `.orchestrator/runtime/sessions/` as authoritative state, managed via `orchctl session upsert`. Launcher and dispatch logic remain future work.

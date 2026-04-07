@@ -205,6 +205,9 @@ Run `orchctl` through the project venv:
 | `room contract <id> [options]` | Set room-level constraints and acceptance criteria (positive spec); use `--constraint`, `--acceptance-criterion`, `--clear-constraints`, `--clear-acceptance-criteria` |
 | `room discovery <id> [options]` | Update room discovery/planning artifacts |
 | `room readiness <id>` | Derived readiness assessment for next action |
+| `session list` | List runtime sessions |
+| `session show <id>` | Show session state |
+| `session upsert <id> [options]` | Create or update session state |
 
 ---
 

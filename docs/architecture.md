@@ -48,6 +48,8 @@ Each peer entry records:
 
 The registry is manually maintained. It is static metadata only. Peer discovery and heartbeat are out of scope.
 
+`peer_registry.yaml` is a static capability directory only. Runtime/session state is tracked separately under `.orchestrator/runtime/sessions/`. Each session file records dynamic state (mode, status, current room/handoff, dirty flag, heartbeat, lease). Session state is updated explicitly via `orchctl session upsert` — there is no automatic synchronization from tmux or any process scan in v0.
+
 ### Handoffs
 
 A handoff is a structured delegation unit — a YAML state object the orchestrator creates when assigning work to a peer. Handoffs are stored as individual YAML files at `.orchestrator/handoffs/<handoff-id>.yaml`.

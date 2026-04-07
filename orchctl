@@ -14,6 +14,7 @@ from lib.handoffs import (
     cmd_handoff_rework,
 )
 from lib.log import cmd_log_append
+from lib.sessions import cmd_session_list, cmd_session_show, cmd_session_upsert
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -244,6 +245,38 @@ def build_parser() -> argparse.ArgumentParser:
     hrework_p.add_argument("--by", required=True, help="Peer requesting the rework")
     hrework_p.add_argument("--to", default=None, help="Assignee for rework (defaults to original assignee)")
     hrework_p.set_defaults(func=cmd_handoff_rework)
+
+    # session subcommand
+    session_p = sub.add_parser("session", help="Runtime session state commands")
+    session_sub = session_p.add_subparsers(dest="session_command", metavar="<subcommand>")
+    session_sub.required = True
+
+    # session list
+    slist_p = session_sub.add_parser("list", help="List all sessions")
+    slist_p.set_defaults(func=cmd_session_list)
+
+    # session show
+    sshow_p = session_sub.add_parser("show", help="Show session details")
+    sshow_p.add_argument("session_id", metavar="<session-id>")
+    sshow_p.set_defaults(func=cmd_session_show)
+
+    # session upsert
+    supsert_p = session_sub.add_parser("upsert", help="Create or update session state")
+    supsert_p.add_argument("session_id", metavar="<session-id>")
+    supsert_p.add_argument("--peer-id", default=None, dest="peer_id")
+    supsert_p.add_argument("--tmux-session", default=None, dest="tmux_session")
+    supsert_p.add_argument("--mode", default=None, choices=["ephemeral", "warm", "persistent"])
+    supsert_p.add_argument("--status", default=None, choices=["offline", "idle", "busy"])
+    supsert_p.add_argument("--room-id", default=None, dest="room_id")
+    supsert_p.add_argument("--handoff-id", default=None, dest="handoff_id")
+    supsert_p.add_argument("--cwd", default=None)
+    supsert_p.add_argument("--branch", default=None)
+    supsert_p.add_argument("--dirty", default=None, help="true|false")
+    supsert_p.add_argument("--reuse-count", default=None, dest="reuse_count")
+    supsert_p.add_argument("--heartbeat-at", default=None, dest="heartbeat_at")
+    supsert_p.add_argument("--lease-until", default=None, dest="lease_until")
+    supsert_p.add_argument("--last-active-at", default=None, dest="last_active_at")
+    supsert_p.set_defaults(func=cmd_session_upsert)
 
     return parser
 
