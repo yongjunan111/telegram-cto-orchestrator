@@ -9,17 +9,16 @@ This file records decisions to intentionally postpone work.
 
 ## Not Yet Built
 
-- Readiness packet: pre-handoff readiness assessment that reads discovery artifacts and determines whether a room is ready for implementation handoff.
-- Discovery-aware brief: `handoff brief` does not yet read the room discovery section; discovery context is not surfaced to workers.
-- Handoff kind specialization: discovery handoff vs implementation handoff as distinct types with different brief/review logic.
-- Readiness rules for:
-  - room creation
-  - discovery handoff
-  - implementation handoff
-- Program layer with real program CRUD / lineage.
-- Peer runtime abstraction and launcher layer.
-- Telegram adapter / bridge that binds Telegram to role-based peers instead of a specific model runtime.
-- Provenance for why room memory / room contract changed.
+- **Provider-specific `/compact` auto-detection.** `orch_compact` saves a pre-compact checkpoint manually. Intercepting `/compact` in Claude Code or `/compact` in Codex would tie the hook layer to a specific runtime and is deliberately deferred.
+- **Light mode.** A lower-friction mode for quick tasks has not been explored yet. The current protocol is deliberately heavy.
+- **Automatic session cleanup.** Dead tmux detection only runs at reuse preflight. There is no background sweeper that reconciles `runtime/sessions/*.yaml` against actual tmux state.
+- **Session heartbeat auto-update.** `heartbeat_at` and `last_active_at` fields exist in session schema but nothing automatically updates them during session activity.
+- **Re-review / review overwrite.** A reviewed handoff cannot be re-reviewed in v0.
+- **Program CRUD / lineage.** Program layer is skeletal.
+- **Peer discovery / introspection.** Peer registry is manually maintained.
+- **Telegram adapter / bridge that binds Telegram to role-based peers** instead of a specific model runtime.
+- **Provenance** for why room memory / room contract changed beyond the room log.
+- **Scoring engine** for review signal weighting.
 
 ## Kept Conservative On Purpose
 
@@ -28,14 +27,21 @@ This file records decisions to intentionally postpone work.
 - No scoring engine.
 - No constraint auto-verdict.
 - No hidden override for review authority.
+- No aggressive session reuse — fresh-per-handoff is default.
+- No provider-specific compact interception — hooks stay generic shell.
+- No tmux scan as a source of truth — runtime/session YAML is authoritative.
 
 ## Legacy Compatibility We Keep Supporting
 
 - Legacy `changes_requested` without `must_address` still reworks with a fallback notice.
 - Older rooms with removed/derived fields are still read conservatively where possible.
+- Handoffs without `kind` are treated as `implementation`.
 
 ## What Not To Do Next
 
-- Do not bolt on more lifecycle states before discovery/scoping is clarified.
-- Do not make model/runtime choice the center of the design before the protocol is finished.
+- Do not loosen dispatch reuse eligibility without a dedicated review.
 - Do not turn the wiki into authoritative state.
+- Do not add provider-specific hooks to the dispatch shell template.
+- Do not use tmux scan as the source of truth for runtime state.
+- Do not merge dispatch / checkpoint / bootstrap artifacts into one file.
+- Do not expand surface before the pending **security review** of dispatch/checkpoint/bootstrap paths.
