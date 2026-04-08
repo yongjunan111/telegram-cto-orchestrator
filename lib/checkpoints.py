@@ -83,26 +83,13 @@ def cmd_session_checkpoint(args):
     )
 
     # Write to checkpoint file
+    # Filename-safe timestamp
+    ts_safe = now.replace(":", "-").replace(".", "-")
+    filename = f"{session_id}-{event}-{ts_safe}.md"
+    artifact_path = os.path.join(CHECKPOINTS_DIR, filename)
+
     try:
-        os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
-        # Filename-safe timestamp
-        ts_safe = now.replace(":", "-").replace(".", "-")
-        filename = f"{session_id}-{event}-{ts_safe}.md"
-        artifact_path = os.path.join(CHECKPOINTS_DIR, filename)
-
-        # Defense in depth: ensure resolved path is inside CHECKPOINTS_DIR
-        checkpoints_real = os.path.realpath(CHECKPOINTS_DIR)
-        artifact_real = os.path.realpath(artifact_path)
-        if not (artifact_real == checkpoints_real or
-                artifact_real.startswith(checkpoints_real + os.sep)):
-            print(
-                f"Error: checkpoint path '{artifact_path}' escapes checkpoints directory.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        with open(artifact_path, "w") as f:
-            f.write(content)
+        storage.safe_write_text(CHECKPOINTS_DIR, artifact_path, content)
     except SystemExit:
         raise
     except Exception as e:

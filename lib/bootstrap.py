@@ -80,12 +80,10 @@ def cmd_session_bootstrap(args):
 
     # Write
     try:
-        os.makedirs(BOOTSTRAP_DIR, exist_ok=True)
         # Defense-in-depth: validate session_id as slug for filename safety
         validate_slug(session_id, "session_id")
         artifact_path = os.path.join(BOOTSTRAP_DIR, f"{session_id}.md")
-        with open(artifact_path, "w") as f:
-            f.write(content)
+        storage.safe_write_text(BOOTSTRAP_DIR, artifact_path, content)
     except SystemExit:
         raise
     except Exception as e:
