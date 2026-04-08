@@ -427,6 +427,190 @@ def _generate_session_id(peer_id: str, handoff_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Reuse race hardening: per-session lock + CAS revalidation
+# ---------------------------------------------------------------------------
+
+LOCKS_DIR = os.path.join(storage.RUNTIME_DIR, "locks")
+
+
+def _session_lock_path(session_id: str) -> str:
+    return os.path.join(LOCKS_DIR, f"session-{session_id}.lock")
+
+
+def _acquire_session_lock(session_id: str) -> tuple:
+    """Atomic per-session lock acquire via O_CREAT|O_EXCL, with runtime path safety.
+
+    Returns (True, lock_path) on success.
+    Returns (False, reason) on any failure (lock held, symlinked locks dir,
+    symlinked lock path, containment violation, payload write failure, etc).
+
+    Safety guarantees:
+    - LOCKS_DIR must not be a symlink (checked before and after makedirs via
+      storage.ensure_safe_runtime_dir).
+    - LOCKS_DIR realpath must be inside realpath(storage.RUNTIME_DIR) — lock
+      files cannot escape the runtime tree.
+    - lock_path must not be a pre-existing symlink. O_EXCL also refuses
+      symlinks atomically; the explicit check yields a clearer error.
+    - On payload write failure the partially-created lock file is removed so
+      no stale lock is left behind. fd is always closed.
+
+    Stale locks from crashed dispatches are NOT auto-recovered. Operator must
+    remove them manually from .orchestrator/runtime/locks/.
+    """
+    if not is_slug_safe(session_id):
+        return False, f"session_id '{session_id}' is not slug-safe"
+
+    # Runtime path safety: LOCKS_DIR must not be a symlink and must be creatable.
+    try:
+        locks_real = storage.ensure_safe_runtime_dir(LOCKS_DIR)
+    except ValueError as e:
+        return False, f"locks dir rejected: {e}"
+    except OSError as e:
+        return False, f"locks dir creation failed: {e}"
+
+    # Containment: LOCKS_DIR realpath must be inside realpath(RUNTIME_DIR).
+    try:
+        runtime_real = os.path.realpath(storage.RUNTIME_DIR)
+    except OSError as e:
+        return False, f"runtime dir realpath failed: {e}"
+    if not (locks_real == runtime_real or locks_real.startswith(runtime_real + os.sep)):
+        return False, (
+            f"locks dir '{LOCKS_DIR}' escapes runtime root '{storage.RUNTIME_DIR}'"
+        )
+
+    lock_path = _session_lock_path(session_id)
+
+    # Refuse pre-existing symlink at lock_path (clearer error than EEXIST path).
+    if os.path.islink(lock_path):
+        return False, f"lock path '{lock_path}' is a symlink; refusing to follow"
+
+    # Atomic O_CREAT|O_EXCL. If lock_path becomes a symlink between islink
+    # check and this open, O_EXCL still refuses the create atomically.
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False, (
+            f"session '{session_id}' is being claimed by another dispatch "
+            f"(lock {lock_path} held; if stale, operator must rm)"
+        )
+    except OSError as e:
+        return False, f"lock acquire failed: {e}"
+
+    # Payload write — on failure, close fd and remove the partially-created
+    # lock file so no stale lock remains. fd is always closed.
+    payload = f"pid={os.getpid()} ts={storage.now_iso()}\n".encode("utf-8")
+    write_error = None
+    try:
+        os.write(fd, payload)
+    except OSError as e:
+        write_error = e
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+    if write_error is not None:
+        try:
+            os.remove(lock_path)
+        except OSError:
+            pass
+        return False, f"lock payload write failed: {write_error}"
+
+    return True, lock_path
+
+
+def _release_session_lock(lock_path: str) -> None:
+    """Best-effort lock release. Idempotent."""
+    if not lock_path:
+        return
+    try:
+        os.remove(lock_path)
+    except OSError:
+        pass
+
+
+def _revalidate_reuse_target(
+    session_id: str,
+    expected_tmux_name: str,
+    target_peer: str,
+    handoff_room: str,
+    handoff_id: str,
+) -> tuple:
+    """CAS-style revalidation: re-read session state from disk and re-check
+    every eligibility condition. Used by _execute_reuse_dispatch under the
+    per-session lock to close the decision -> execution drift window.
+
+    Returns (True, fresh_state_dict) if the session is still eligible.
+    Returns (False, reason) on any drift / mismatch / parse error.
+    """
+    path = storage.session_path(session_id)
+    if not os.path.isfile(path):
+        return False, "session state file disappeared"
+
+    try:
+        fresh = storage.read_state(path)
+    except Exception as e:
+        return False, f"session state file could not be parsed: {e}"
+
+    if not isinstance(fresh, dict) or "session" not in fresh:
+        return False, "session state file missing 'session' section"
+
+    s = fresh.get("session") or {}
+
+    # Internal ref re-validation (slug-safe)
+    sess_room = s.get("room_id") or ""
+    sess_handoff = s.get("handoff_id") or ""
+    sess_tmux = s.get("tmux_session") or ""
+
+    if sess_room:
+        try:
+            validate_slug(sess_room, "session.room_id")
+        except SystemExit:
+            return False, "invalid internal ref: session.room_id not slug-safe"
+    if sess_handoff:
+        try:
+            validate_slug(sess_handoff, "session.handoff_id")
+        except SystemExit:
+            return False, "invalid internal ref: session.handoff_id not slug-safe"
+    if not _is_safe_tmux_name(sess_tmux):
+        return False, f"invalid internal ref: session.tmux_session '{sess_tmux}' unsafe"
+
+    # tmux_session must not have been re-pointed since the decision snapshot
+    if sess_tmux != expected_tmux_name:
+        return False, (
+            f"tmux_session changed from '{expected_tmux_name}' to '{sess_tmux}' "
+            f"since decision"
+        )
+
+    # Eligibility re-check (mirror of _evaluate_session_eligibility)
+    if s.get("peer_id") != target_peer:
+        return False, f"peer mismatch (session.peer_id={s.get('peer_id')!r})"
+
+    status = s.get("status", "")
+    if status != "idle":
+        return False, f"status is '{status}', not idle"
+
+    if s.get("dirty"):
+        return False, "session became dirty"
+
+    if sess_room and sess_room != handoff_room:
+        return False, f"room mismatch (session.room_id={sess_room!r})"
+
+    if sess_handoff and sess_handoff != handoff_id:
+        return False, f"already bound to handoff '{sess_handoff}'"
+
+    lease_until = s.get("lease_until") or ""
+    if lease_until and not _lease_valid(lease_until):
+        return False, f"lease expired ({lease_until})"
+
+    # tmux still live
+    if not _tmux_session_exists(sess_tmux):
+        return False, "tmux session no longer exists"
+
+    return True, fresh
+
+
+# ---------------------------------------------------------------------------
 # Lease helper
 # ---------------------------------------------------------------------------
 
@@ -602,50 +786,74 @@ def _execute_reuse_dispatch(
     if not tmux_name or not _is_safe_tmux_name(tmux_name):
         return {"ok": False, "error": f"chosen session '{session_id}' has unsafe tmux_session name '{tmux_name}'"}
 
-    # Preflight: tmux must exist
-    if not _tmux_session_exists(tmux_name):
-        return {"ok": False, "error": f"reuse candidate's tmux session '{tmux_name}' does not exist"}
+    # Acquire per-session lock BEFORE any revalidation or state mutation.
+    # Closes the concurrent-reuse-dispatch race for the same session_id:
+    # without this, two parallel dispatches could both pass revalidation and
+    # both write status=busy, double-claiming the same idle session.
+    lock_ok, lock_value = _acquire_session_lock(session_id)
+    if not lock_ok:
+        return {"ok": False, "error": lock_value}
+    lock_path = lock_value
 
-    # Update session state
     try:
-        path = storage.session_path(session_id)
-        if not os.path.isfile(path):
-            return {"ok": False, "error": f"session '{session_id}' state file disappeared"}
-        sess_state = storage.read_state(path)
-        sess = sess_state.get("session", {})
-        sess["status"] = "busy"
-        sess["room_id"] = handoff_room
-        sess["handoff_id"] = handoff_id
-        sess["reuse_count"] = (sess.get("reuse_count") or 0) + 1
-        sess["heartbeat_at"] = now
-        sess["lease_until"] = lease_until
-        sess["last_active_at"] = now
-        sess_state["session"] = sess
-        storage.write_state(path, sess_state)
-    except Exception as e:
-        return {"ok": False, "error": f"session state update failed: {e}"}
+        # Preflight: tmux must exist (cheap fast-fail before disk re-read)
+        if not _tmux_session_exists(tmux_name):
+            return {"ok": False, "error": f"reuse candidate's tmux session '{tmux_name}' does not exist"}
 
-    # Write dispatch artifact
-    try:
-        artifact_path = _write_dispatch_artifact(
-            handoff_state, room_state, session_id, tmux_name, target_peer, now
+        # CAS-style revalidation: re-read session state from disk and re-check
+        # every eligibility condition against the snapshot's expectations.
+        # Closes the decision -> execution drift window. Fail-closed on any drift.
+        revalid_ok, revalid_value = _revalidate_reuse_target(
+            session_id=session_id,
+            expected_tmux_name=tmux_name,
+            target_peer=target_peer,
+            handoff_room=handoff_room,
+            handoff_id=handoff_id,
         )
-    except Exception as e:
-        print(f"Warning: artifact write failed: {e}", file=sys.stderr)
-        artifact_path = "(failed)"
+        if not revalid_ok:
+            return {"ok": False, "error": f"session no longer eligible for reuse: {revalid_value}"}
 
-    # Re-inject session hooks (idempotent due to ORCH_EXIT_TRAP_SET guard)
-    _inject_session_hooks(tmux_name, session_id, handoff_id, handoff_room)
+        fresh_state = revalid_value
 
-    # Auto-read: run bootstrap and display (supersedes raw dispatch artifact display)
-    _run_bootstrap_and_display(tmux_name, session_id)
+        # Update session state using the freshly-read state, not the stale snapshot
+        try:
+            path = storage.session_path(session_id)
+            sess = fresh_state.get("session", {})
+            sess["status"] = "busy"
+            sess["room_id"] = handoff_room
+            sess["handoff_id"] = handoff_id
+            sess["reuse_count"] = (sess.get("reuse_count") or 0) + 1
+            sess["heartbeat_at"] = now
+            sess["lease_until"] = lease_until
+            sess["last_active_at"] = now
+            fresh_state["session"] = sess
+            storage.write_state(path, fresh_state)
+        except Exception as e:
+            return {"ok": False, "error": f"session state update failed: {e}"}
 
-    return {
-        "ok": True,
-        "session_id": session_id,
-        "tmux_session": tmux_name,
-        "artifact_path": artifact_path,
-    }
+        # Write dispatch artifact
+        try:
+            artifact_path = _write_dispatch_artifact(
+                handoff_state, room_state, session_id, tmux_name, target_peer, now
+            )
+        except Exception as e:
+            print(f"Warning: artifact write failed: {e}", file=sys.stderr)
+            artifact_path = "(failed)"
+
+        # Re-inject session hooks (idempotent due to ORCH_EXIT_TRAP_SET guard)
+        _inject_session_hooks(tmux_name, session_id, handoff_id, handoff_room)
+
+        # Auto-read: run bootstrap and display (supersedes raw dispatch artifact display)
+        _run_bootstrap_and_display(tmux_name, session_id)
+
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "tmux_session": tmux_name,
+            "artifact_path": artifact_path,
+        }
+    finally:
+        _release_session_lock(lock_path)
 
 
 def _run_bootstrap_and_display(tmux_name: str, session_id: str) -> None:

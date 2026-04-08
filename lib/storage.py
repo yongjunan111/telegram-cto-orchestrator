@@ -62,6 +62,33 @@ def append_log(path: str, entry: str) -> None:
         f.write(entry)
 
 
+def ensure_safe_runtime_dir(base_dir: str) -> str:
+    """Ensure a runtime directory is safe to use: exists, is a directory,
+    and is not a symlink. Create it if missing.
+
+    Returns realpath(base_dir) on success.
+    Raises ValueError if base_dir is empty or a symlink (checked before and
+    after makedirs). Raises OSError if it cannot be created or is not a
+    directory. Does NOT call sys.exit.
+
+    Does NOT check runtime-root containment — that is the caller's
+    responsibility. This helper is the shared dir-safety primitive used by
+    non-file-write runtime artifacts (e.g. per-session lock files) that
+    cannot route through safe_write_text.
+    """
+    if not base_dir:
+        raise ValueError("base_dir must not be empty")
+    if os.path.islink(base_dir):
+        raise ValueError(f"base_dir '{base_dir}' is a symlink; refusing to follow")
+    os.makedirs(base_dir, exist_ok=True)
+    # Race defense: re-check after makedirs
+    if os.path.islink(base_dir):
+        raise ValueError(f"base_dir '{base_dir}' became a symlink; refusing to follow")
+    if not os.path.isdir(base_dir):
+        raise OSError(f"base_dir '{base_dir}' is not a directory")
+    return os.path.realpath(base_dir)
+
+
 def safe_write_text(base_dir: str, target_path: str, content: str) -> None:
     """Write text content to target_path, enforcing containment under base_dir.
 
