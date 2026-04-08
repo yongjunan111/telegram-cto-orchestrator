@@ -1,11 +1,21 @@
 """Handoff dispatch — read-only plan and executable allocation."""
 import os
+import re
 import sys
+import shlex
 import subprocess
 from datetime import datetime, timezone, timedelta
 
 from . import storage
 from .handoffs import _load_handoff_with_room, _get_handoff_kind, _derive_review_state
+from .validators import validate_slug, is_slug_safe
+
+
+_TMUX_NAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+
+
+def _is_safe_tmux_name(name: str) -> bool:
+    return bool(name) and bool(_TMUX_NAME_RE.match(name))
 
 
 def cmd_handoff_dispatch_plan(args):
@@ -211,6 +221,11 @@ def _evaluate_session_eligibility(sess_state, target_peer, handoff_room, handoff
     if s.get("peer_id") != target_peer:
         return "ineligible", f"peer mismatch (session.peer_id={s.get('peer_id')!r})"
 
+    # Fix 1: skip sessions with dead or missing tmux
+    tmux_name = s.get("tmux_session") or ""
+    if not tmux_name or not _tmux_session_exists(tmux_name):
+        return "ineligible", "tmux session dead or missing"
+
     status = s.get("status", "")
     if status != "idle":
         return "ineligible", f"status is '{status}', not idle"
@@ -280,28 +295,46 @@ def _compute_dispatch_decision(
         reasons.append("Handoff is blocked")
         return {"outcome": "cannot_allocate", "reasons": reasons, "chosen_session": None}
 
-    # wait_for_existing_assignment: same handoff already assigned to a busy session
-    for sess_state in peer_sessions:
-        s = sess_state.get("session", {})
-        if s.get("handoff_id") == handoff_id and s.get("status") == "busy":
-            reasons.append(f"Handoff already assigned to busy session '{s.get('id')}'")
-            return {"outcome": "wait_for_existing_assignment", "reasons": reasons, "chosen_session": None}
-
-    # wait_for_existing_assignment: handoff already bound to any session (non-busy)
-    for sess_state in peer_sessions:
-        s = sess_state.get("session", {})
-        if s.get("handoff_id") == handoff_id:
-            reasons.append(f"Handoff already bound to session '{s.get('id')}'")
-            return {"outcome": "wait_for_existing_assignment", "reasons": reasons, "chosen_session": None}
-
-    # Parse errors → conservative
+    # Fix 2: Parse errors → cannot_allocate (fail-closed on corrupted runtime state)
     if session_parse_errors:
         reasons.append(
             f"{len(session_parse_errors)} session file(s) could not be parsed: "
             f"{', '.join(session_parse_errors)}"
         )
-        reasons.append("Cannot trust runtime state for reuse — defaulting to fresh_session")
-        return {"outcome": "fresh_session", "reasons": reasons, "chosen_session": None}
+        reasons.append("Cannot trust runtime state for allocation — fix or remove the malformed file(s).")
+        return {"outcome": "cannot_allocate", "reasons": reasons, "chosen_session": None}
+
+    # Fix 1: wait_for_existing_assignment: same handoff already assigned to a busy session
+    # Skip sessions whose tmux is dead — they are stale bindings and should not block allocation.
+    stale_skipped = []
+    for sess_state in peer_sessions:
+        s = sess_state.get("session", {})
+        if s.get("handoff_id") == handoff_id and s.get("status") == "busy":
+            tmux_name = s.get("tmux_session") or ""
+            if not tmux_name or not _tmux_session_exists(tmux_name):
+                stale_skipped.append(s.get("id", "?"))
+                continue
+            reasons.append(f"Handoff already assigned to busy session '{s.get('id')}'")
+            return {"outcome": "wait_for_existing_assignment", "reasons": reasons, "chosen_session": None}
+
+    # Fix 1: wait_for_existing_assignment: handoff already bound to any session (non-busy)
+    # Same stale-tmux guard applies.
+    for sess_state in peer_sessions:
+        s = sess_state.get("session", {})
+        if s.get("handoff_id") == handoff_id:
+            tmux_name = s.get("tmux_session") or ""
+            if not tmux_name or not _tmux_session_exists(tmux_name):
+                if s.get("id", "?") not in stale_skipped:
+                    stale_skipped.append(s.get("id", "?"))
+                continue
+            reasons.append(f"Handoff already bound to session '{s.get('id')}'")
+            return {"outcome": "wait_for_existing_assignment", "reasons": reasons, "chosen_session": None}
+
+    if stale_skipped:
+        reasons.append(
+            f"Warning: {len(stale_skipped)} stale session binding(s) skipped (dead tmux): "
+            f"{', '.join(stale_skipped)}"
+        )
 
     # reuse_existing_session: any eligible session
     eligible = [e for e in session_evaluations if e["verdict"] == "eligible"]
@@ -450,16 +483,16 @@ def _inject_session_hooks(tmux_name: str, session_id: str, handoff_id: str, room
     hook_path = _install_session_hook_file()
     venv_python, orchctl_script = _get_orchctl_invocation()
 
-    # Send env var exports
+    # Send env var exports — use shlex.quote for safe shell quoting (Fix 4)
     exports = (
-        f"export ORCH_SESSION_ID='{session_id}' "
-        f"ORCH_HANDOFF_ID='{handoff_id}' "
-        f"ORCH_ROOM_ID='{room_id}' "
-        f"ORCHCTL_PYTHON='{venv_python}' "
-        f"ORCHCTL_SCRIPT='{orchctl_script}'"
+        f"export ORCH_SESSION_ID={shlex.quote(session_id)} "
+        f"ORCH_HANDOFF_ID={shlex.quote(handoff_id)} "
+        f"ORCH_ROOM_ID={shlex.quote(room_id)} "
+        f"ORCHCTL_PYTHON={shlex.quote(venv_python)} "
+        f"ORCHCTL_SCRIPT={shlex.quote(orchctl_script)}"
     )
     _tmux_send_keys(tmux_name, exports)
-    _tmux_send_keys(tmux_name, f"source '{hook_path}'")
+    _tmux_send_keys(tmux_name, f"source {shlex.quote(hook_path)}")
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +503,11 @@ def _execute_fresh_dispatch(
     handoff_state, room_state, target_peer, handoff_id, handoff_room,
     handoff_kind, cwd, now, lease_until
 ):
+    # Validate handoff.id slug BEFORE any tmux creation or state mutation
+    handoff_id_internal = handoff_state.get("handoff", {}).get("id", "")
+    if not is_slug_safe(handoff_id_internal):
+        return {"ok": False, "error": f"handoff internal id '{handoff_id_internal}' is not slug-safe"}
+
     tmux_name = _generate_tmux_name(target_peer, handoff_id)
     session_id = _generate_session_id(target_peer, handoff_id)
 
@@ -541,16 +579,33 @@ def _execute_reuse_dispatch(
     handoff_state, room_state, chosen_session, target_peer, handoff_id,
     handoff_room, handoff_kind, now, lease_until
 ):
+    # Validate handoff.id slug BEFORE any state mutation
+    handoff_id_internal = handoff_state.get("handoff", {}).get("id", "")
+    if not is_slug_safe(handoff_id_internal):
+        return {"ok": False, "error": f"handoff internal id '{handoff_id_internal}' is not slug-safe"}
+
     s = chosen_session.get("session", {})
     session_id = s.get("id", "")
     tmux_name = s.get("tmux_session", "")
+    reuse_room_id = s.get("room_id", "")
+    reuse_handoff_id = s.get("handoff_id", "")
 
     if not session_id:
         return {"ok": False, "error": "chosen session has no id"}
 
+    # Fix 3: revalidate internal references from session state before use
+    try:
+        if reuse_room_id:
+            validate_slug(reuse_room_id, "session.room_id")
+        if reuse_handoff_id:
+            validate_slug(reuse_handoff_id, "session.handoff_id")
+    except SystemExit:
+        return {"ok": False, "error": f"chosen session '{session_id}' has invalid room_id or handoff_id — cannot reuse"}
+
+    if not tmux_name or not _is_safe_tmux_name(tmux_name):
+        return {"ok": False, "error": f"chosen session '{session_id}' has unsafe tmux_session name '{tmux_name}'"}
+
     # Preflight: tmux must exist
-    if not tmux_name:
-        return {"ok": False, "error": f"reuse candidate '{session_id}' has no tmux_session name"}
     if not _tmux_session_exists(tmux_name):
         return {"ok": False, "error": f"reuse candidate's tmux session '{tmux_name}' does not exist"}
 
@@ -625,7 +680,7 @@ def _run_bootstrap_and_display(tmux_name: str, session_id: str) -> None:
 
     if success and os.path.isfile(bootstrap_path):
         _tmux_send_keys(tmux_name, "clear")
-        _tmux_send_keys(tmux_name, f"echo 'Bootstrap artifact:' && cat {bootstrap_path}")
+        _tmux_send_keys(tmux_name, f"echo 'Bootstrap artifact:' && cat {shlex.quote(bootstrap_path)}")
     else:
         _tmux_send_keys(tmux_name, "echo 'Bootstrap artifact not available (generation failed).'")
 
@@ -638,6 +693,7 @@ def _write_dispatch_artifact(handoff_state, room_state, session_id, tmux_name, t
 
     h = handoff_state.get("handoff", {})
     handoff_id = h.get("id", "?")
+
     artifact_path = os.path.join(DISPATCHES_DIR, f"{handoff_id}.md")
 
     brief = _render_brief(handoff_state, room_state)

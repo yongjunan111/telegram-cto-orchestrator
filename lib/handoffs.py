@@ -232,6 +232,9 @@ def _load_handoff_with_room(handoff_id: str):
         print(f"Error: handoff '{handoff_id}' has no room_id.", file=sys.stderr)
         sys.exit(1)
 
+    # Validate room_id slug BEFORE constructing any path from it
+    validate_slug(room_id, "handoff.room_id")
+
     room_state_path = storage.room_state_path(room_id)
     if not os.path.isfile(room_state_path):
         print(

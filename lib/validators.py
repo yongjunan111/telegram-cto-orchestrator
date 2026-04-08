@@ -9,6 +9,11 @@ from . import storage
 _SLUG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$')
 
 
+def is_slug_safe(value: str) -> bool:
+    """Return True if value matches the slug pattern, False otherwise."""
+    return bool(value) and bool(_SLUG_RE.match(value))
+
+
 def validate_slug(value: str, label: str) -> None:
     """Exit with error if value is not a valid slug."""
     if not _SLUG_RE.match(value):

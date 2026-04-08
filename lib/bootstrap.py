@@ -31,6 +31,21 @@ def cmd_session_bootstrap(args):
     room_id = s.get("room_id") or ""
     handoff_id = s.get("handoff_id") or ""
 
+    # Fix 3: revalidate internal references from session state before using them in file paths
+    try:
+        if room_id:
+            validate_slug(room_id, "session.room_id")
+    except SystemExit:
+        print(f"Warning: session '{session_id}' has invalid room_id '{room_id}' — treating as unset.", file=sys.stderr)
+        room_id = ""
+
+    try:
+        if handoff_id:
+            validate_slug(handoff_id, "session.handoff_id")
+    except SystemExit:
+        print(f"Warning: session '{session_id}' has invalid handoff_id '{handoff_id}' — treating as unset.", file=sys.stderr)
+        handoff_id = ""
+
     # Load room state (fallback None if missing/malformed)
     room_state = None
     if room_id:
