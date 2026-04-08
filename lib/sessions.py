@@ -4,7 +4,7 @@ import sys
 
 from . import storage
 from .validators import (
-    validate_slug, require_session,
+    validate_slug, validate_tmux_target, require_session,
     require_peer, require_room, require_handoff,
     VALID_SESSION_MODES, VALID_SESSION_STATUSES,
 )
@@ -31,9 +31,9 @@ def cmd_session_list(args):
         print("No sessions found.")
         return
 
-    fmt = "{:<20} {:<16} {:<10} {:<8} {:<16} {:<20} {:<6} {:<22}"
-    print(fmt.format("ID", "PEER", "MODE", "STATUS", "ROOM", "HANDOFF", "DIRTY", "LEASE_UNTIL"))
-    print("-" * 120)
+    fmt = "{:<20} {:<16} {:<10} {:<8} {:<16} {:<20} {:<6} {:<10} {:<22}"
+    print(fmt.format("ID", "PEER", "MODE", "STATUS", "ROOM", "HANDOFF", "DIRTY", "TARGET", "LEASE_UNTIL"))
+    print("-" * 132)
 
     for fname in files:
         path = os.path.join(storage.SESSIONS_DIR, fname)
@@ -47,10 +47,11 @@ def cmd_session_list(args):
             room = str(s.get("room_id") or "")[:15]
             handoff = str(s.get("handoff_id") or "")[:19]
             dirty = "yes" if s.get("dirty") else "no"
+            target = str(s.get("tmux_target") or "")[:9]
             lease = str(s.get("lease_until") or "")[:21]
-            print(fmt.format(sid, peer, mode, status, room, handoff, dirty, lease))
+            print(fmt.format(sid, peer, mode, status, room, handoff, dirty, target, lease))
         except Exception:
-            print(fmt.format(fname[:-5], "(parse error)", "-", "-", "-", "-", "-", "-"))
+            print(fmt.format(fname[:-5], "(parse error)", "-", "-", "-", "-", "-", "-", "-"))
 
 
 def cmd_session_show(args):
@@ -76,6 +77,7 @@ def cmd_session_show(args):
     print(f"Session: {s.get('id', '')}")
     print(f"  Peer ID:        {_fmt(s.get('peer_id'))}")
     print(f"  Tmux session:   {_fmt(s.get('tmux_session'))}")
+    print(f"  Tmux target:    {_fmt(s.get('tmux_target'))}")
     print(f"  Mode:           {_fmt(s.get('mode'))}")
     print(f"  Status:         {_fmt(s.get('status'))}")
     print(f"  Room ID:        {_fmt(s.get('room_id'))}")
@@ -100,6 +102,13 @@ def cmd_session_upsert(args):
     if args.status is not None and args.status not in VALID_SESSION_STATUSES:
         print(f"Error: Invalid status '{args.status}'. Valid: {', '.join(sorted(VALID_SESSION_STATUSES))}.", file=sys.stderr)
         sys.exit(1)
+
+    # CLI boundary check: tmux_target must match the safe pane id format BEFORE
+    # we collect updates and write authoritative state. Without this, an
+    # operator could `session upsert ... --tmux-target foo` and persist a
+    # structurally invalid value into runtime/sessions/<id>.yaml.
+    if args.tmux_target is not None:
+        validate_tmux_target(args.tmux_target, "tmux_target")
 
     # Validate reuse_count non-negative
     reuse_count = None
@@ -136,6 +145,8 @@ def cmd_session_upsert(args):
         updates["peer_id"] = args.peer_id
     if args.tmux_session is not None:
         updates["tmux_session"] = args.tmux_session
+    if args.tmux_target is not None:
+        updates["tmux_target"] = args.tmux_target
     if args.mode is not None:
         updates["mode"] = args.mode
     if args.status is not None:

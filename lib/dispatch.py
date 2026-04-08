@@ -12,10 +12,17 @@ from .validators import validate_slug, is_slug_safe
 
 
 _TMUX_NAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+# tmux pane id format: %N where N is one or more digits.
+_TMUX_TARGET_RE = re.compile(r'^%[0-9]+$')
 
 
 def _is_safe_tmux_name(name: str) -> bool:
     return bool(name) and bool(_TMUX_NAME_RE.match(name))
+
+
+def _is_safe_tmux_target(target: str) -> bool:
+    """A safe tmux pane target is `%N` where N is one or more digits."""
+    return bool(target) and bool(_TMUX_TARGET_RE.match(target))
 
 
 def cmd_handoff_dispatch_plan(args):
@@ -155,6 +162,7 @@ def cmd_handoff_dispatch(args):
     print(f"  outcome:       {outcome}")
     print(f"  session:       {result['session_id']}")
     print(f"  tmux_session:  {result['tmux_session']}")
+    print(f"  tmux_target:   {result.get('tmux_target', '(none)')}")
     print(f"  cwd:           {cwd}")
     print(f"  artifact:      {result['artifact_path']}")
     for r in reasons:
@@ -215,16 +223,30 @@ def _lease_valid(lease_until: str) -> bool:
 
 
 def _evaluate_session_eligibility(sess_state, target_peer, handoff_room, handoff_id, handoff_kind):
-    """Return (verdict, reason) for a single session."""
+    """Return (verdict, reason) for a single session.
+
+    Reuse eligibility is strict: a session must have an exact tmux pane target
+    (`tmux_target`) recorded in its authoritative state and that pane must be
+    alive. Legacy sessions without `tmux_target` are NEVER reusable — the
+    duplicate-blocking path in _compute_dispatch_decision keeps them visible
+    via wait_for_existing_assignment instead.
+    """
     s = sess_state.get("session", {})
 
     if s.get("peer_id") != target_peer:
         return "ineligible", f"peer mismatch (session.peer_id={s.get('peer_id')!r})"
 
-    # Fix 1: skip sessions with dead or missing tmux
+    # Fix 1: skip sessions with dead or missing tmux session name
     tmux_name = s.get("tmux_session") or ""
     if not tmux_name or not _tmux_session_exists(tmux_name):
         return "ineligible", "tmux session dead or missing"
+
+    # Exact pane targeting: legacy sessions without tmux_target are NOT reusable
+    tmux_target = s.get("tmux_target") or ""
+    if not _is_safe_tmux_target(tmux_target):
+        return "ineligible", "no exact tmux_target (legacy session — not reusable)"
+    if not _tmux_target_exists(tmux_target):
+        return "ineligible", f"tmux_target '{tmux_target}' dead or missing"
 
     status = s.get("status", "")
     if status != "idle":
@@ -245,7 +267,7 @@ def _evaluate_session_eligibility(sess_state, target_peer, handoff_room, handoff
     if lease_until and not _lease_valid(lease_until):
         return "ineligible", f"lease expired ({lease_until})"
 
-    return "eligible", "matches peer/room, idle, clean, lease valid"
+    return "eligible", "matches peer/room, idle, clean, lease valid, exact tmux_target alive"
 
 
 def _compute_dispatch_decision(
@@ -368,6 +390,55 @@ def _tmux_session_exists(name: str) -> bool:
         return result.returncode == 0
     except Exception:
         return False
+
+
+def _tmux_capture_pane_target(session_name: str) -> tuple:
+    """Capture the active pane id of a tmux session immediately after creation.
+
+    Used by fresh dispatch to bind the new session to an exact pane target so
+    later send-keys hits exactly that pane (not whichever pane the user happens
+    to have selected after splitting/window-creating).
+
+    Returns (True, pane_target) on success, (False, reason) on failure.
+    pane_target is verified to match the safe regex (%N).
+    """
+    if not _is_safe_tmux_name(session_name):
+        return False, f"unsafe tmux session name '{session_name}'"
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", session_name, "#{pane_id}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except FileNotFoundError:
+        return False, "tmux command not found"
+    except Exception as e:
+        return False, f"tmux display-message error: {e}"
+    if result.returncode != 0:
+        return False, f"tmux display-message failed: {result.stderr.strip() or 'unknown error'}"
+    target = (result.stdout or "").strip()
+    if not _is_safe_tmux_target(target):
+        return False, f"captured pane target '{target}' is not a safe pane id"
+    return True, target
+
+
+def _tmux_target_exists(target: str) -> bool:
+    """Check that a specific pane target is alive and resolves to itself.
+
+    A safe target's `display-message -p -t %N '#{pane_id}'` must echo back
+    the same `%N`. Returns False on any tmux error, mismatch, or unsafe input.
+    """
+    if not _is_safe_tmux_target(target):
+        return False
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", target, "#{pane_id}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    return (result.stdout or "").strip() == target
 
 
 def _tmux_create_session(name: str, cwd: str) -> tuple:
@@ -532,6 +603,7 @@ def _release_session_lock(lock_path: str) -> None:
 def _revalidate_reuse_target(
     session_id: str,
     expected_tmux_name: str,
+    expected_tmux_target: str,
     target_peer: str,
     handoff_room: str,
     handoff_id: str,
@@ -539,6 +611,9 @@ def _revalidate_reuse_target(
     """CAS-style revalidation: re-read session state from disk and re-check
     every eligibility condition. Used by _execute_reuse_dispatch under the
     per-session lock to close the decision -> execution drift window.
+
+    Adds exact pane/window targeting checks: the on-disk tmux_target must be
+    safe, equal to the snapshot's expected target, and refer to a live pane.
 
     Returns (True, fresh_state_dict) if the session is still eligible.
     Returns (False, reason) on any drift / mismatch / parse error.
@@ -561,6 +636,7 @@ def _revalidate_reuse_target(
     sess_room = s.get("room_id") or ""
     sess_handoff = s.get("handoff_id") or ""
     sess_tmux = s.get("tmux_session") or ""
+    sess_target = s.get("tmux_target") or ""
 
     if sess_room:
         try:
@@ -574,11 +650,19 @@ def _revalidate_reuse_target(
             return False, "invalid internal ref: session.handoff_id not slug-safe"
     if not _is_safe_tmux_name(sess_tmux):
         return False, f"invalid internal ref: session.tmux_session '{sess_tmux}' unsafe"
+    if not _is_safe_tmux_target(sess_target):
+        return False, f"invalid internal ref: session.tmux_target '{sess_target}' unsafe or missing"
 
     # tmux_session must not have been re-pointed since the decision snapshot
     if sess_tmux != expected_tmux_name:
         return False, (
             f"tmux_session changed from '{expected_tmux_name}' to '{sess_tmux}' "
+            f"since decision"
+        )
+    # tmux_target must not have drifted either
+    if sess_target != expected_tmux_target:
+        return False, (
+            f"tmux_target changed from '{expected_tmux_target}' to '{sess_target}' "
             f"since decision"
         )
 
@@ -603,9 +687,12 @@ def _revalidate_reuse_target(
     if lease_until and not _lease_valid(lease_until):
         return False, f"lease expired ({lease_until})"
 
-    # tmux still live
+    # tmux session name still live
     if not _tmux_session_exists(sess_tmux):
         return False, "tmux session no longer exists"
+    # exact pane target still live
+    if not _tmux_target_exists(sess_target):
+        return False, f"tmux_target '{sess_target}' no longer exists"
 
     return True, fresh
 
@@ -656,9 +743,14 @@ def _get_orchctl_invocation() -> tuple:
     return venv_python, orchctl_script
 
 
-def _inject_session_hooks(tmux_name: str, session_id: str, handoff_id: str, room_id: str) -> None:
-    """Inject env vars + source hook file into a live tmux session. Best effort, idempotent."""
-    if not _tmux_session_exists(tmux_name):
+def _inject_session_hooks(tmux_target: str, session_id: str, handoff_id: str, room_id: str) -> None:
+    """Inject env vars + source hook file into the EXACT pane identified by
+    tmux_target. Best effort, idempotent. Caller is responsible for passing a
+    target captured/revalidated under the appropriate guard.
+    """
+    if not _is_safe_tmux_target(tmux_target):
+        return
+    if not _tmux_target_exists(tmux_target):
         return
 
     hook_path = _install_session_hook_file()
@@ -672,8 +764,8 @@ def _inject_session_hooks(tmux_name: str, session_id: str, handoff_id: str, room
         f"ORCHCTL_PYTHON={shlex.quote(venv_python)} "
         f"ORCHCTL_SCRIPT={shlex.quote(orchctl_script)}"
     )
-    _tmux_send_keys(tmux_name, exports)
-    _tmux_send_keys(tmux_name, f"source {shlex.quote(hook_path)}")
+    _tmux_send_keys(tmux_target, exports)
+    _tmux_send_keys(tmux_target, f"source {shlex.quote(hook_path)}")
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +797,20 @@ def _execute_fresh_dispatch(
     if not ok:
         return {"ok": False, "error": err}
 
+    # Capture exact pane target IMMEDIATELY after creation. If capture fails,
+    # roll back the tmux session and bail before any state / artifact / hook
+    # side effects. This binds the session to a known pane id for the lifetime
+    # of the dispatch, so later send-keys cannot be silently mis-routed if the
+    # user splits the window.
+    capture_ok, capture_value = _tmux_capture_pane_target(tmux_name)
+    if not capture_ok:
+        _tmux_kill_session(tmux_name)
+        return {
+            "ok": False,
+            "error": f"tmux pane target capture failed: {capture_value}; tmux rolled back",
+        }
+    tmux_target = capture_value
+
     # Write session state
     try:
         os.makedirs(storage.SESSIONS_DIR, exist_ok=True)
@@ -713,6 +819,7 @@ def _execute_fresh_dispatch(
                 "id": session_id,
                 "peer_id": target_peer,
                 "tmux_session": tmux_name,
+                "tmux_target": tmux_target,
                 "mode": "ephemeral",
                 "status": "busy",
                 "room_id": handoff_room,
@@ -735,23 +842,25 @@ def _execute_fresh_dispatch(
     # Write dispatch artifact
     try:
         artifact_path = _write_dispatch_artifact(
-            handoff_state, room_state, session_id, tmux_name, target_peer, now
+            handoff_state, room_state, session_id, tmux_name, target_peer, now,
+            tmux_target=tmux_target,
         )
     except Exception as e:
         # Don't roll back state — artifact is derived, but warn
         print(f"Warning: artifact write failed: {e}", file=sys.stderr)
         artifact_path = "(failed)"
 
-    # Inject session hooks first (best effort, idempotent)
-    _inject_session_hooks(tmux_name, session_id, handoff_id, handoff_room)
+    # Inject session hooks at the EXACT captured pane (best effort, idempotent)
+    _inject_session_hooks(tmux_target, session_id, handoff_id, handoff_room)
 
-    # Auto-read: run bootstrap and display (supersedes raw dispatch artifact display)
-    _run_bootstrap_and_display(tmux_name, session_id)
+    # Auto-read: run bootstrap and display in the exact pane
+    _run_bootstrap_and_display(tmux_target, session_id)
 
     return {
         "ok": True,
         "session_id": session_id,
         "tmux_session": tmux_name,
+        "tmux_target": tmux_target,
         "artifact_path": artifact_path,
     }
 
@@ -768,6 +877,7 @@ def _execute_reuse_dispatch(
     s = chosen_session.get("session", {})
     session_id = s.get("id", "")
     tmux_name = s.get("tmux_session", "")
+    tmux_target = s.get("tmux_target", "")
     reuse_room_id = s.get("room_id", "")
     reuse_handoff_id = s.get("handoff_id", "")
 
@@ -786,6 +896,18 @@ def _execute_reuse_dispatch(
     if not tmux_name or not _is_safe_tmux_name(tmux_name):
         return {"ok": False, "error": f"chosen session '{session_id}' has unsafe tmux_session name '{tmux_name}'"}
 
+    # Exact pane targeting is mandatory for reuse. Legacy sessions without a
+    # tmux_target are NOT reusable: bail before lock acquire so we don't write
+    # any state, touch any tmux, or hold any lock for an inert session.
+    if not _is_safe_tmux_target(tmux_target):
+        return {
+            "ok": False,
+            "error": (
+                f"chosen session '{session_id}' has missing or unsafe tmux_target "
+                f"'{tmux_target}' — cannot reuse (legacy session)"
+            ),
+        }
+
     # Acquire per-session lock BEFORE any revalidation or state mutation.
     # Closes the concurrent-reuse-dispatch race for the same session_id:
     # without this, two parallel dispatches could both pass revalidation and
@@ -796,9 +918,12 @@ def _execute_reuse_dispatch(
     lock_path = lock_value
 
     try:
-        # Preflight: tmux must exist (cheap fast-fail before disk re-read)
+        # Preflight: both tmux session AND exact pane target must exist
+        # (cheap fast-fail before disk re-read).
         if not _tmux_session_exists(tmux_name):
             return {"ok": False, "error": f"reuse candidate's tmux session '{tmux_name}' does not exist"}
+        if not _tmux_target_exists(tmux_target):
+            return {"ok": False, "error": f"reuse candidate's tmux_target '{tmux_target}' does not exist"}
 
         # CAS-style revalidation: re-read session state from disk and re-check
         # every eligibility condition against the snapshot's expectations.
@@ -806,6 +931,7 @@ def _execute_reuse_dispatch(
         revalid_ok, revalid_value = _revalidate_reuse_target(
             session_id=session_id,
             expected_tmux_name=tmux_name,
+            expected_tmux_target=tmux_target,
             target_peer=target_peer,
             handoff_room=handoff_room,
             handoff_id=handoff_id,
@@ -815,7 +941,9 @@ def _execute_reuse_dispatch(
 
         fresh_state = revalid_value
 
-        # Update session state using the freshly-read state, not the stale snapshot
+        # Update session state using the freshly-read state, not the stale snapshot.
+        # tmux_session and tmux_target are preserved as-is (revalidation already
+        # confirmed they match the snapshot and are alive).
         try:
             path = storage.session_path(session_id)
             sess = fresh_state.get("session", {})
@@ -834,31 +962,33 @@ def _execute_reuse_dispatch(
         # Write dispatch artifact
         try:
             artifact_path = _write_dispatch_artifact(
-                handoff_state, room_state, session_id, tmux_name, target_peer, now
+                handoff_state, room_state, session_id, tmux_name, target_peer, now,
+                tmux_target=tmux_target,
             )
         except Exception as e:
             print(f"Warning: artifact write failed: {e}", file=sys.stderr)
             artifact_path = "(failed)"
 
-        # Re-inject session hooks (idempotent due to ORCH_EXIT_TRAP_SET guard)
-        _inject_session_hooks(tmux_name, session_id, handoff_id, handoff_room)
+        # Re-inject session hooks at the EXACT captured pane (idempotent).
+        _inject_session_hooks(tmux_target, session_id, handoff_id, handoff_room)
 
-        # Auto-read: run bootstrap and display (supersedes raw dispatch artifact display)
-        _run_bootstrap_and_display(tmux_name, session_id)
+        # Auto-read: run bootstrap and display in the exact pane.
+        _run_bootstrap_and_display(tmux_target, session_id)
 
         return {
             "ok": True,
             "session_id": session_id,
             "tmux_session": tmux_name,
+            "tmux_target": tmux_target,
             "artifact_path": artifact_path,
         }
     finally:
         _release_session_lock(lock_path)
 
 
-def _run_bootstrap_and_display(tmux_name: str, session_id: str) -> None:
-    """Run session bootstrap and cat the artifact in the tmux session.
-    Best-effort; failures do not abort dispatch.
+def _run_bootstrap_and_display(tmux_target: str, session_id: str) -> None:
+    """Run session bootstrap and cat the artifact in the EXACT pane identified
+    by tmux_target. Best-effort; failures do not abort dispatch.
     """
     venv_python, orchctl_script = _get_orchctl_invocation()
     bootstrap_path = os.path.join(storage.RUNTIME_DIR, "bootstrap", f"{session_id}.md")
@@ -877,20 +1007,22 @@ def _run_bootstrap_and_display(tmux_name: str, session_id: str) -> None:
     except Exception as e:
         print(f"Warning: bootstrap subprocess error: {e}", file=sys.stderr)
 
-    # Display in tmux:
+    # Display in the exact pane:
     # - success AND file exists → cat the artifact
     # - otherwise → honest failure message, never cat a stale file
-    if not _tmux_session_exists(tmux_name):
+    if not _is_safe_tmux_target(tmux_target):
+        return
+    if not _tmux_target_exists(tmux_target):
         return
 
     if success and os.path.isfile(bootstrap_path):
-        _tmux_send_keys(tmux_name, "clear")
-        _tmux_send_keys(tmux_name, f"echo 'Bootstrap artifact:' && cat {shlex.quote(bootstrap_path)}")
+        _tmux_send_keys(tmux_target, "clear")
+        _tmux_send_keys(tmux_target, f"echo 'Bootstrap artifact:' && cat {shlex.quote(bootstrap_path)}")
     else:
-        _tmux_send_keys(tmux_name, "echo 'Bootstrap artifact not available (generation failed).'")
+        _tmux_send_keys(tmux_target, "echo 'Bootstrap artifact not available (generation failed).'")
 
 
-def _write_dispatch_artifact(handoff_state, room_state, session_id, tmux_name, target_peer, now):
+def _write_dispatch_artifact(handoff_state, room_state, session_id, tmux_name, target_peer, now, tmux_target=None):
     from .handoffs import _render_brief
 
     DISPATCHES_DIR = os.path.join(storage.RUNTIME_DIR, "dispatches")
@@ -903,6 +1035,7 @@ def _write_dispatch_artifact(handoff_state, room_state, session_id, tmux_name, t
 
     brief = _render_brief(handoff_state, room_state)
 
+    target_line = tmux_target if tmux_target else "(none)"
     content = f"""# Dispatch Artifact: {handoff_id}
 
 - **Handoff ID:** {handoff_id}
@@ -911,6 +1044,7 @@ def _write_dispatch_artifact(handoff_state, room_state, session_id, tmux_name, t
 - **Kind:** {_get_handoff_kind(handoff_state)}
 - **Session ID:** {session_id}
 - **Tmux session:** {tmux_name}
+- **Tmux target:** {target_line}
 - **Generated at:** {now}
 
 ---

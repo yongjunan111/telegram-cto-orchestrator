@@ -8,6 +8,10 @@ from . import storage
 # Slug: lowercase letters, digits, hyphens. 1-64 chars. No leading/trailing hyphen.
 _SLUG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$')
 
+# tmux pane target: pane id format `%N` where N is one or more digits.
+# Mirrors lib/dispatch.py's _TMUX_TARGET_RE — both must stay in sync.
+_TMUX_TARGET_RE = re.compile(r'^%[0-9]+$')
+
 
 def is_slug_safe(value: str) -> bool:
     """Return True if value matches the slug pattern, False otherwise."""
@@ -20,6 +24,24 @@ def validate_slug(value: str, label: str) -> None:
         print(
             f"Error: {label} '{value}' is invalid. "
             f"Use lowercase letters, digits, and hyphens (1-64 chars, no leading/trailing hyphen).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def validate_tmux_target(value: str, label: str) -> None:
+    """Exit with error if value is not a safe tmux pane target.
+
+    A safe tmux pane target is `%N` where N is one or more digits (e.g. `%12`).
+    Anything else — slugs, shell metacharacters, bare `%`, `%abc` — is rejected
+    at the CLI boundary so authoritative session state never holds a structurally
+    invalid tmux_target.
+    """
+    if not value or not _TMUX_TARGET_RE.match(value):
+        print(
+            f"Error: {label} '{value}' is invalid. "
+            f"Use the tmux pane id format '%N' where N is one or more digits "
+            f"(e.g. '%12').",
             file=sys.stderr,
         )
         sys.exit(1)

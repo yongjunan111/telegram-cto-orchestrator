@@ -115,6 +115,7 @@ def _render_checkpoint(session_id, event, note, s, room_state, handoff_state, no
         "## Session",
         f"- **Peer ID:** {_fmt(s.get('peer_id'))}",
         f"- **Tmux session:** {_fmt(s.get('tmux_session'))}",
+        f"- **Tmux target:** {_fmt(s.get('tmux_target'))}",
         f"- **Mode:** {_fmt(s.get('mode'))}",
         f"- **Status:** {_fmt(s.get('status'))}",
         f"- **Dirty:** {'yes' if s.get('dirty') else 'no'}",

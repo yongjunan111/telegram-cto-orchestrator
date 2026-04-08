@@ -45,6 +45,7 @@ def _build_session_state(
     session_id="sess-test",
     peer_id="peer-test",
     tmux_name="orch-peer-test-sess",
+    tmux_target="%12",
     room_id="",
     handoff_id="",
     status="idle",
@@ -56,6 +57,7 @@ def _build_session_state(
             "id": session_id,
             "peer_id": peer_id,
             "tmux_session": tmux_name,
+            "tmux_target": tmux_target,
             "mode": "ephemeral",
             "status": status,
             "room_id": room_id,
@@ -92,6 +94,7 @@ class ReuseRaceTestBase(unittest.TestCase):
 
         # Records for side-effect calls
         self.tmux_exists_return = True
+        self.tmux_target_exists_return = True
         self.tmux_send_keys_calls = []
         self.tmux_kill_calls = []
         self.inject_calls = []
@@ -103,6 +106,11 @@ class ReuseRaceTestBase(unittest.TestCase):
                 dispatch,
                 "_tmux_session_exists",
                 side_effect=lambda name: self.tmux_exists_return,
+            ),
+            mock.patch.object(
+                dispatch,
+                "_tmux_target_exists",
+                side_effect=lambda target: self.tmux_target_exists_return,
             ),
             mock.patch.object(
                 dispatch,

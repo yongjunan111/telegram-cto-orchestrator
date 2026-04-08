@@ -278,6 +278,8 @@ def build_parser() -> argparse.ArgumentParser:
     supsert_p.add_argument("session_id", metavar="<session-id>")
     supsert_p.add_argument("--peer-id", default=None, dest="peer_id")
     supsert_p.add_argument("--tmux-session", default=None, dest="tmux_session")
+    supsert_p.add_argument("--tmux-target", default=None, dest="tmux_target",
+                           help="Exact tmux pane id (e.g. %%12) — required for new dispatches to be reusable")
     supsert_p.add_argument("--mode", default=None, choices=["ephemeral", "warm", "persistent"])
     supsert_p.add_argument("--status", default=None, choices=["offline", "idle", "busy"])
     supsert_p.add_argument("--room-id", default=None, dest="room_id")
