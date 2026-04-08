@@ -114,3 +114,43 @@ It is not the source of truth; it is the design rationale layer.
 - Injected hooks define `orch_checkpoint`, `orch_compact`, `orch_bootstrap`, and an EXIT trap — all plain bash.
 - Reason: intercepting Claude-specific `/compact` or Codex-specific commands couples the dispatch layer to a single model runtime.
 - Consequence: `/compact` auto-detection is deliberately deferred. Users call `orch_compact` manually before compacting.
+
+## Stale/Dead Tmux Bindings Are Skipped, Not Trusted
+
+- Dispatch decision no longer uses a session's `handoff_id` binding as evidence of an active assignment if the session's tmux is dead or missing.
+- Reason: after a reboot, tmux crash, or shell exit, session YAML can lie — the runtime layer must be skeptical of stored bindings unless the tmux is actually live.
+- Consequence: `_compute_dispatch_decision` filters out dead-tmux sessions before both the wait-for-existing-assignment check and reuse eligibility. Dead bindings surface as warnings in the decision reasons.
+
+## Parse Errors Fail Closed, Not Open
+
+- If any session YAML under `runtime/sessions/` fails to parse, dispatch returns `cannot_allocate`, not `fresh_session`.
+- Reason: parse errors mean the runtime state is untrustworthy. Silently defaulting to fresh allocation risks double-dispatching live work, masking corruption, and undermining the conservative principle that drives the rest of the dispatch design.
+- Consequence: operator sees the malformed file list and must fix or remove it before dispatch resumes. No silent recovery.
+
+## Internal YAML References Are Re-validated On Read
+
+- `_load_handoff_with_room` validates `handoff.room_id` with `validate_slug` before constructing any path.
+- `_execute_fresh_dispatch` and `_execute_reuse_dispatch` both validate `handoff.id` with `is_slug_safe` before any tmux creation or state mutation.
+- `_execute_reuse_dispatch` also re-validates the chosen session's `room_id`, `handoff_id`, and `tmux_session` before touching state.
+- `cmd_session_bootstrap` re-validates session state's `room_id` and `handoff_id` before opening related files; invalid values render as `(none)` fallback.
+- Reason: even slug-validated CLI input cannot protect against tampered or corrupted YAML written between invocations. Read paths must not trust stored references.
+- Consequence: a tampered internal reference produces a controlled error, not a path-traversal or injection.
+
+## Tmux Shell Commands Are `shlex.quote`-Safe
+
+- `_inject_session_hooks` and `_run_bootstrap_and_display` use `shlex.quote` for every interpolated value that goes to `tmux send-keys`.
+- Reason: single-quote f-strings do not escape inner single quotes; a tampered `handoff_id` or `room_id` could break out of the quote and inject shell commands.
+- Consequence: path, env-var, and file-path interpolation is quote-safe regardless of upstream validation state. Defense in depth.
+
+## Derived Artifact Writers Use `safe_write_text`
+
+- Bootstrap, dispatch artifact, checkpoint, and session hook-file writers all route through `storage.safe_write_text(base_dir, target_path, content)`.
+- The helper enforces: base-dir symlink refusal (including post-`makedirs` race re-check), intermediate parent-chain symlink refusal via `_check_parent_chain_no_symlinks`, target-file symlink refusal, containment under realpath(base_dir), atomic temp-file + `os.replace` rename, tmp cleanup on failure.
+- Reason: derived artifacts are not authoritative but they are still file writes under the operator's repo. A pre-existing symlink at a runtime artifact path could silently clobber files outside the runtime tree. The helper makes that class of attack impossible without needing to trust individual writers.
+- Consequence: the four writers no longer use raw `open(...)`. Helpers raise ordinary exceptions (never `sys.exit`); command-level semantics live in callers.
+
+## Helper `sys.exit` Is A Caller Hazard
+
+- Helpers invoked from inside dispatch execution (`_write_dispatch_artifact`, `safe_write_text`, etc.) must not call `sys.exit`.
+- Reason: if a helper exits mid-dispatch, the process dies before cleanup — tmux session stays live, session YAML stays in the wrong state, rollback never runs.
+- Consequence: helpers raise exceptions; callers decide whether to fail the command, warn, or roll back. Only top-level command functions are allowed to `sys.exit`.
