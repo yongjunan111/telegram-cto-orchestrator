@@ -17,6 +17,7 @@ It is not authoritative state. Authoritative state lives in `.orchestrator/runti
   - `id` (slug)
   - `peer_id` (must match a registry peer)
   - `tmux_session` (deterministic name from peer + handoff)
+  - `tmux_target` (exact pane id `%N`, captured on fresh dispatch; required for reuse)
   - `mode`: `ephemeral | warm | persistent`
   - `status`: `offline | idle | busy`
   - `room_id`, `handoff_id` (must reference existing room/handoff when set)
@@ -25,7 +26,7 @@ It is not authoritative state. Authoritative state lives in `.orchestrator/runti
   - `reuse_count` (non-negative int)
   - `heartbeat_at`, `lease_until`, `last_active_at` (ISO timestamps)
 - Commands: `orchctl session list | show | upsert | checkpoint | bootstrap`
-- Referential integrity: `session upsert` validates `peer_id`, `room_id`, `handoff_id` against existing authoritative state before writing.
+- Referential integrity: `session upsert` validates `peer_id`, `room_id`, `handoff_id` against existing authoritative state before writing. `tmux_target` is validated against the `%[0-9]+` format at the CLI boundary.
 
 ### Safe-Write Helper
 
@@ -122,14 +123,13 @@ It is not authoritative state. Authoritative state lives in `.orchestrator/runti
 - Tampered internal reference (e.g. `handoff.room_id = "../evil"`) → controlled error, no path ops, no state mutation.
 - Symlinked runtime artifact base dir / parent / target → write refused, ordinary exception raised to caller.
 
-## What Is NOT Yet Implemented
+## What Is NOT Yet Implemented (Remaining Polish)
 
-- **Reuse race guard.** There is no CAS/file lock between the decision phase (which chooses a reuse target) and the execution phase (which writes `status=busy`). Two parallel `orchctl handoff dispatch` invocations could both claim the same idle session.
-- **Exact pane/window targeting.** `tmux send-keys` currently targets by session name only. If the user has split panes, keys may land in the wrong pane.
 - **Hook install / bootstrap success semantics.** Both are best-effort and their failures become stderr warnings. The dispatch result line still says "dispatched" even if hook injection or bootstrap generation failed.
 - **Bootstrap footer wording.** The footer currently lists the latest checkpoint as source of truth alongside YAML state, blurring the derived/authoritative boundary.
-- **Provider-specific `/compact` auto-detection.** `orch_compact` is manual. Intercepting Claude-specific or Codex-specific commands would couple the hook layer to a runtime, deliberately deferred.
-- **Automatic session cleanup.** Dead tmux detection only happens at decision and reuse preflight. There is no background sweeper — stale sessions accumulate in YAML until an operator removes them.
+- **Stale lock operational cleanup.** Lock files left by crashed dispatches require operator `rm`. No auto-recovery.
+- **Provider-specific `/compact` auto-detection.** `orch_compact` is manual. Deliberately deferred.
+- **Automatic session cleanup.** Dead tmux detection only runs at decision/reuse preflight. No background sweeper.
 - **Session heartbeat auto-update.** The field exists but nothing updates it during session activity.
 - **Light mode.** Not yet explored.
 
@@ -138,15 +138,18 @@ It is not authoritative state. Authoritative state lives in `.orchestrator/runti
 - Never use tmux scan as a source of truth. Runtime session YAML is the source.
 - Never write derived artifacts (dispatch / checkpoint / bootstrap) into authoritative YAML.
 - Never display a stale bootstrap when generation fails.
-- Never reuse a dirty, busy, wrong-room, or dead-tmux session.
-- Never use a dead-tmux session as evidence of an existing assignment.
+- Never reuse a dirty, busy, wrong-room, dead-tmux, or missing-tmux_target session.
+- Never reuse a session without acquiring the per-session O_EXCL lock first.
+- Never use a dead-tmux session as evidence of an existing assignment (but legacy sessions with live tmux still block duplicate dispatch).
 - Never dispatch into a blocked room.
 - Never fall back to `fresh_session` when session parse errors exist — fail closed as `cannot_allocate`.
 - Never trust internal YAML references (`handoff.room_id`, `handoff.id`, `session.room_id`, `session.handoff_id`, `session.tmux_session`) without re-validating on the read path before any filename, subprocess, or path operation.
 - Never interpolate untrusted strings directly into `tmux send-keys` commands — always `shlex.quote`.
 - Never write a runtime artifact via raw `open(...)`; always go through `storage.safe_write_text`.
 - Never follow a symlinked runtime base dir, parent chain, or target file.
-- Fresh dispatch must clean up its own tmux session if subsequent state write fails.
+- Fresh dispatch must clean up its own tmux session if pane target capture or subsequent state write fails.
+- Hook injection, bootstrap display, and all tmux send-keys must use the exact pane target (`tmux_target`), never the session name.
+- Lock path must refuse symlinked LOCKS_DIR, symlinked lock files, and paths outside the runtime root.
 - Checkpoint and bootstrap filename components must be slug-safe.
 - Bootstrap failure is non-fatal for dispatch but must never be hidden.
 - Helper-level code must not `sys.exit`; it must raise ordinary exceptions so callers can preserve cleanup semantics.

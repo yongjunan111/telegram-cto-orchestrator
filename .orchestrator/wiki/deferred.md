@@ -37,6 +37,12 @@ This file records decisions to intentionally postpone work.
 - Older rooms with removed/derived fields are still read conservatively where possible.
 - Handoffs without `kind` are treated as `implementation`.
 
+## Remaining Operational Polish (Not Blockers)
+
+- **Hook install / bootstrap success semantics.** Both are best-effort warnings. Surfacing them in dispatch result would improve operator visibility.
+- **Bootstrap footer wording.** Footer currently lists checkpoint alongside authoritative state, blurring the derived/authoritative boundary.
+- **Stale lock / stale session operational tooling.** Lock files left by crashed dispatches and dead-tmux session YAML both require operator `rm`. No sweeper or auto-recovery exists.
+
 ## What Not To Do Next
 
 - Do not loosen dispatch reuse eligibility without a dedicated review.
@@ -44,4 +50,5 @@ This file records decisions to intentionally postpone work.
 - Do not add provider-specific hooks to the dispatch shell template.
 - Do not use tmux scan as the source of truth for runtime state.
 - Do not merge dispatch / checkpoint / bootstrap artifacts into one file.
-- Do not expand surface before the pending **security review** of dispatch/checkpoint/bootstrap paths.
+- Do not add stale lock auto-recovery without careful dead-process detection design.
+- Do not expand orchestrator surface before production use validates the current design.

@@ -59,6 +59,8 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
 - `40fcb8b` session memory and runtime references synced
 - `1730584` harden dispatch against stale state and unsafe refs
 - `2c1e676` harden runtime artifact writes against symlink escapes
+- `c2e52f1` harden reuse dispatch locking and revalidation
+- `6f03979` require exact tmux pane targets for dispatch reuse
 
 ## Current Shape Of The System
 
@@ -76,26 +78,26 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
   - derived bootstrap artifacts (next-session startup packets)
 - Shell hook layer injects `orch_checkpoint`, `orch_compact`, `orch_bootstrap`, and an EXIT trap into every dispatched session.
 - Bootstrap auto-read displays the derived startup packet on dispatch, covering both fresh and reuse paths.
-- Dispatch decision is hardened: stale/dead tmux bindings are skipped for wait and reuse decisions; session parse errors fail closed as `cannot_allocate` (no fresh fallback); internal `handoff.room_id` / `handoff.id` / session `room_id` / session `handoff_id` / session `tmux_session` are re-validated on read before filename or subprocess use; tmux injected shell commands are `shlex.quote`-safe.
-- Runtime derived artifact writers (bootstrap, dispatch artifact, checkpoint, session hook file) route through `storage.safe_write_text`, which enforces: base-dir containment, base-dir symlink refusal, intermediate parent-chain symlink refusal, target-file symlink refusal, atomic temp-file + `os.replace` rename. Helpers raise ordinary exceptions; command-level failure semantics live in callers.
+- Dispatch decision is hardened: stale/dead tmux bindings are skipped for wait and reuse decisions; session parse errors fail closed as `cannot_allocate` (no fresh fallback); internal YAML references are re-validated on read before filename or subprocess use; tmux injected shell commands are `shlex.quote`-safe.
+- Runtime derived artifact writers route through `storage.safe_write_text` with containment + symlink-refuse + atomic rename.
+- Reuse dispatch is hardened with per-session `O_EXCL` lock + CAS revalidation: two parallel dispatches cannot double-claim the same idle session. Lock path safety enforces symlink refusal, runtime-root containment, and payload write failure cleanup.
+- Exact tmux pane targeting: fresh dispatch captures pane id (`%N`) immediately after `tmux new-session` and stores it as `tmux_target` in authoritative session state. Reuse dispatch revalidates the target (drift, liveness). Hooks, bootstrap display, and all `send-keys` use the exact pane target, not the session name. Legacy sessions without `tmux_target` are ineligible for reuse but still block duplicate dispatch via `wait_for_existing_assignment`.
+- Session `upsert --tmux-target` validates the pane id format at the CLI boundary before writing authoritative state.
 
-## Current Bottleneck
+## Status
 
-- Security review batch 1 (stale state, parse error, internal refs, shell quoting, artifact safe-write, symlink escapes) has landed. What remains is the concurrency/visibility tier of the same review:
-  - Reuse race (no CAS/file lock between decision and execution)
-  - Exact tmux pane/window targeting (currently session-level only)
-  - Hook install + bootstrap success semantics are silent warnings, not part of dispatch result
-  - Bootstrap footer wording still lists checkpoint as a source of truth
-- `/compact` auto-detection is still manual. The `orch_compact` helper saves a pre-compact checkpoint but does not intercept provider-specific compact commands.
+**v1 development phase complete.** The dispatch/runtime/session layer is production-ready for first real-world use. Remaining items are operational polish, not blockers.
 
-## Next Priority
+Remaining polish:
+1. Hook install / bootstrap success semantics — surface in dispatch result instead of silent warnings.
+2. Bootstrap footer wording — clarify authority boundary (checkpoint is derived).
+3. Stale lock / stale session operational cleanup tooling (currently operator-manual).
+4. (Deferred) Provider-specific `/compact` auto-detection.
+5. (Deferred) Light mode / automatic session heartbeat / sweeper.
 
-1. Reuse race guard — CAS/file lock between dispatch decision and state write.
-2. Exact pane/window targeting for `tmux send-keys`.
-3. Surface hook install and bootstrap success in dispatch result instead of swallowing as warnings.
-4. Bootstrap footer wording — clarify that checkpoint is derived, not source of truth.
-5. (Deferred) Provider-specific `/compact` auto-detection.
-6. (Deferred) Light mode — not yet explored.
+## Next Phase
+
+The next phase is production use on real work repos, not further orchestrator development. Issues discovered during production use will feed back into the hardening backlog.
 
 ## Wiki Layer Status
 

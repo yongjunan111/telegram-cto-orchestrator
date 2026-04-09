@@ -23,21 +23,27 @@ Do not mix them. Wiki and runtime artifacts are compiled/derived views. They nev
 - Dispatched tmux sessions get shell hooks + auto-read bootstrap
 - Dispatch hardened against stale tmux bindings, parse-error fresh-fallback, tampered internal refs, and shell injection via send-keys
 - Runtime artifact writers (dispatch/checkpoint/bootstrap/hook) use safe-write helper: containment + symlink-refuse + atomic rename
+- Reuse dispatch hardened with per-session O_EXCL lock + CAS revalidation (no double-claim)
+- Exact tmux pane targeting: fresh captures pane id, reuse revalidates target, hooks/bootstrap use exact pane
+- Legacy sessions (no tmux_target) block duplicate dispatch but are not reusable
 
-## Next Work
+## Status
 
-1. Reuse race guard — CAS/file lock so two parallel dispatches cannot claim the same idle session
-2. Exact pane/window targeting for tmux send-keys (currently session-only)
-3. Hook install / bootstrap success semantics — surface these in dispatch result instead of silent warnings
-4. Bootstrap footer wording — clarify authority boundary (checkpoint is derived, not source of truth)
-5. (Deferred) Provider-specific `/compact` auto-detection
-6. (Deferred) Light mode
+**v1 development phase complete.** Next phase is production use on real work repos.
+
+Remaining operational polish (not blockers):
+1. Hook install / bootstrap success semantics — surface in dispatch result
+2. Bootstrap footer wording — clarify authority boundary
+3. Stale lock / stale session operational cleanup tooling
+4. (Deferred) Provider-specific `/compact` auto-detection
+5. (Deferred) Light mode / automatic session heartbeat / sweeper
 
 ## Invariants
 
 - Never write derived content into authoritative YAML
 - Never use tmux scan as truth — runtime/session YAML is the source
-- Fresh dispatch is default; reuse requires eligible clean idle session + live tmux
+- Fresh dispatch is default; reuse requires eligible clean idle session + live tmux + exact pane target
+- Reuse dispatch must acquire per-session O_EXCL lock before any state mutation
 - Bootstrap failure never aborts dispatch, but never displays stale bootstrap either
 - Checkpoint/bootstrap filename components must be slug-safe
 - Internal YAML references are re-validated on read paths before filename/subprocess use

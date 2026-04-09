@@ -149,6 +149,28 @@ It is not the source of truth; it is the design rationale layer.
 - Reason: derived artifacts are not authoritative but they are still file writes under the operator's repo. A pre-existing symlink at a runtime artifact path could silently clobber files outside the runtime tree. The helper makes that class of attack impossible without needing to trust individual writers.
 - Consequence: the four writers no longer use raw `open(...)`. Helpers raise ordinary exceptions (never `sys.exit`); command-level semantics live in callers.
 
+## Reuse Race Closed With Lock + CAS Revalidation
+
+- Reuse dispatch acquires a per-session `O_EXCL` lock file (`.orchestrator/runtime/locks/session-<id>.lock`) BEFORE revalidation or state mutation.
+- Under the lock, CAS-style revalidation re-reads authoritative session state from disk and re-checks every eligibility condition against the decision snapshot's expectations.
+- Reason: without the lock, two parallel `orchctl handoff dispatch` could both pass revalidation and both write `status=busy`, double-claiming the same idle session. Atomic YAML rename prevents corruption but not double reuse. The lock serializes the critical section.
+- Lock path safety: LOCKS_DIR symlink refusal, runtime-root containment, lock_path symlink refusal, payload write failure cleanup.
+- Stale lock recovery is operator-manual: if a dispatch crashes with the lock held, the operator must `rm` the lock file. No auto-recovery — matches the project's "malformed state = operator intervention" pattern.
+
+## Exact Pane Targeting Is Mandatory For Reuse
+
+- Fresh dispatch captures the pane id (`%N`) immediately after `tmux new-session` and stores it as `tmux_target` in authoritative session state.
+- Reuse dispatch requires `tmux_target` to be present, safe, matching the snapshot, and alive. Missing or unsafe target → fail-closed as ineligible.
+- All `send-keys` (hooks, bootstrap, command injection) use the exact pane target, not the session name.
+- Reason: if the user splits panes or creates windows in a reused tmux session, session-name-level `send-keys` hits whichever pane happens to be selected — silently mis-routing hooks and commands to the wrong shell.
+- Consequence: capture failure in fresh dispatch rolls back the tmux session (kill + no state/artifact/hook side effects). Legacy sessions without `tmux_target` are never reusable.
+
+## Legacy Sessions Block Duplicate Dispatch But Cannot Be Reused
+
+- `_evaluate_session_eligibility` requires `tmux_target` → legacy sessions are ineligible for reuse.
+- `_compute_dispatch_decision` wait-for-existing-assignment loops still check `_tmux_session_exists(tmux_name)` → a legacy session bound to the same handoff with live tmux still blocks duplicate dispatch.
+- Reason: if legacy sessions were silently treated as stale, removing them from duplicate detection would open the door to dispatching the same handoff twice. Reuse eligibility is strict; duplicate blocking is conservative.
+
 ## Helper `sys.exit` Is A Caller Hazard
 
 - Helpers invoked from inside dispatch execution (`_write_dispatch_artifact`, `safe_write_text`, etc.) must not call `sys.exit`.
