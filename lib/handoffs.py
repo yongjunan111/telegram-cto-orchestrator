@@ -3,7 +3,7 @@ import os
 import sys
 
 from . import storage
-from .validators import validate_slug, require_room, require_handoff, require_peer
+from .validators import validate_slug, require_room, require_handoff, require_peer, is_slug_safe
 
 
 def _get_handoff_kind(handoff_state: dict) -> str:
@@ -63,7 +63,7 @@ def cmd_handoff_create(args):
 
     validate_slug(handoff_id, "handoff_id")
     require_room(room_id)
-    require_peer(to)
+    validate_slug(to, "to")
 
     dest = storage.handoff_path(handoff_id)
     if os.path.exists(dest):

@@ -92,7 +92,12 @@ def cmd_handoff_dispatch(args):
     handoff_kind = _get_handoff_kind(handoff_state)
     review_state = _derive_review_state(handoff_state)
 
-    peer_entry = _load_peer_entry(target_peer)
+    # Ensure peer exists (auto-register if missing)
+    peer_entry, peer_err = _ensure_peer(target_peer, room_state)
+    if peer_err:
+        print(f"Error: {peer_err}", file=sys.stderr)
+        sys.exit(1)
+
     sessions, session_parse_errors = _scan_sessions()
     peer_sessions = [s for s in sessions if s.get("session", {}).get("peer_id") == target_peer]
 
@@ -131,8 +136,11 @@ def cmd_handoff_dispatch(args):
         print("No state changed.")
         return
 
-    # Determine cwd
-    cwd = (peer_entry or {}).get("cwd") or os.getcwd()
+    # Determine cwd from peer entry (never fallback to os.getcwd())
+    cwd = (peer_entry or {}).get("cwd") or ""
+    if not cwd:
+        print(f"Error: peer '{target_peer}' has no cwd configured.", file=sys.stderr)
+        sys.exit(1)
     if not os.path.isdir(cwd):
         print(f"Error: cwd '{cwd}' does not exist for peer '{target_peer}'.", file=sys.stderr)
         sys.exit(1)
@@ -184,6 +192,63 @@ def _load_peer_entry(peer_id: str):
     except Exception:
         return None
     return None
+
+
+def _ensure_peer(peer_id: str, room_state: dict):
+    """Ensure peer exists in registry. Auto-register if missing.
+
+    Uses room_state context.execution_cwd as the peer's cwd.
+    Returns (peer_entry, error_message). On success error_message is None.
+    On failure peer_entry is None.
+    """
+    existing = _load_peer_entry(peer_id)
+    if existing is not None:
+        return existing, None
+
+    # Auto-register: require execution_cwd from room state
+    execution_cwd = (room_state.get("context") or {}).get("execution_cwd") or ""
+    if not execution_cwd:
+        return None, (
+            f"Peer '{peer_id}' not in registry and room has no context.execution_cwd — "
+            f"cannot auto-register. Set execution_cwd via: "
+            f"orchctl room memory <room-id> --execution-cwd /path/to/repo"
+        )
+
+    if not os.path.isdir(execution_cwd):
+        return None, (
+            f"Peer '{peer_id}' not in registry and room's execution_cwd "
+            f"'{execution_cwd}' does not exist"
+        )
+
+    new_peer = {
+        "id": peer_id,
+        "name": peer_id.replace("-", " ").title(),
+        "type": "worker",
+        "cwd": execution_cwd,
+        "capabilities": [],
+        "status": "available",
+    }
+
+    # Atomic read-modify-write of peer registry
+    try:
+        if os.path.isfile(storage.PEER_REGISTRY_PATH):
+            reg = storage.read_state(storage.PEER_REGISTRY_PATH)
+        else:
+            reg = {"peers": []}
+
+        peers = reg.get("peers") or []
+        # Double-check: another process might have registered concurrently
+        for p in peers:
+            if isinstance(p, dict) and p.get("id") == peer_id:
+                return p, None
+
+        peers.append(new_peer)
+        reg["peers"] = peers
+        storage.write_state(storage.PEER_REGISTRY_PATH, reg)
+    except Exception as e:
+        return None, f"Failed to auto-register peer '{peer_id}': {e}"
+
+    return new_peer, None
 
 
 def _scan_sessions():
@@ -853,8 +918,9 @@ def _execute_fresh_dispatch(
     # Inject session hooks at the EXACT captured pane (best effort, idempotent)
     _inject_session_hooks(tmux_target, session_id, handoff_id, handoff_room)
 
-    # Auto-read: run bootstrap and display in the exact pane
-    _run_bootstrap_and_display(tmux_target, session_id)
+    # Generate bootstrap and launch worker
+    bootstrap_path = _run_bootstrap_and_display(tmux_target, session_id)
+    _launch_worker(tmux_target, session_id, bootstrap_path)
 
     return {
         "ok": True,
@@ -972,8 +1038,9 @@ def _execute_reuse_dispatch(
         # Re-inject session hooks at the EXACT captured pane (idempotent).
         _inject_session_hooks(tmux_target, session_id, handoff_id, handoff_room)
 
-        # Auto-read: run bootstrap and display in the exact pane.
-        _run_bootstrap_and_display(tmux_target, session_id)
+        # Generate bootstrap and launch worker.
+        bootstrap_path = _run_bootstrap_and_display(tmux_target, session_id)
+        _launch_worker(tmux_target, session_id, bootstrap_path)
 
         return {
             "ok": True,
@@ -986,9 +1053,11 @@ def _execute_reuse_dispatch(
         _release_session_lock(lock_path)
 
 
-def _run_bootstrap_and_display(tmux_target: str, session_id: str) -> None:
-    """Run session bootstrap and cat the artifact in the EXACT pane identified
-    by tmux_target. Best-effort; failures do not abort dispatch.
+def _run_bootstrap_and_display(tmux_target: str, session_id: str) -> str:
+    """Run session bootstrap and return the artifact path.
+
+    Best-effort; failures do not abort dispatch. Returns the bootstrap path
+    if generation succeeded and the file exists, empty string otherwise.
     """
     venv_python, orchctl_script = _get_orchctl_invocation()
     bootstrap_path = os.path.join(storage.RUNTIME_DIR, "bootstrap", f"{session_id}.md")
@@ -1007,19 +1076,64 @@ def _run_bootstrap_and_display(tmux_target: str, session_id: str) -> None:
     except Exception as e:
         print(f"Warning: bootstrap subprocess error: {e}", file=sys.stderr)
 
-    # Display in the exact pane:
-    # - success AND file exists → cat the artifact
-    # - otherwise → honest failure message, never cat a stale file
+    if success and os.path.isfile(bootstrap_path):
+        return bootstrap_path
+    return ""
+
+
+def _get_worker_launch_script() -> str:
+    """Return absolute path to the worker launch helper script."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker_launch.py")
+
+
+def _launch_worker(tmux_target: str, session_id: str, bootstrap_path: str) -> None:
+    """Launch a Claude worker in the EXACT pane identified by tmux_target.
+
+    Best-effort; failures do not abort dispatch. If a worker process is
+    already running in the pane, skip to avoid duplicate execution.
+    """
     if not _is_safe_tmux_target(tmux_target):
         return
     if not _tmux_target_exists(tmux_target):
         return
 
-    if success and os.path.isfile(bootstrap_path):
-        _tmux_send_keys(tmux_target, "clear")
-        _tmux_send_keys(tmux_target, f"echo 'Bootstrap artifact:' && cat {shlex.quote(bootstrap_path)}")
-    else:
-        _tmux_send_keys(tmux_target, "echo 'Bootstrap artifact not available (generation failed).'")
+    if not bootstrap_path or not os.path.isfile(bootstrap_path):
+        _tmux_send_keys(tmux_target, "echo 'Bootstrap artifact not available — worker not launched.'")
+        return
+
+    # Check if a worker process (claude) is already running in the pane
+    if _pane_has_worker(tmux_target):
+        print(f"Warning: pane {tmux_target} already has a worker process — skipping launch.", file=sys.stderr)
+        return
+
+    launch_script = _get_worker_launch_script()
+    venv_python, _ = _get_orchctl_invocation()
+
+    # Single command sent to tmux — no multiline, no quoting issues
+    cmd = f"{shlex.quote(venv_python)} {shlex.quote(launch_script)} {shlex.quote(bootstrap_path)}"
+    _tmux_send_keys(tmux_target, cmd)
+
+
+def _pane_has_worker(tmux_target: str) -> bool:
+    """Check if the pane's foreground process is claude (or similar worker).
+
+    Uses tmux's pane_current_command format. Returns True if a worker is
+    detected, False otherwise (including on any error — conservative toward
+    launching).
+    """
+    if not _is_safe_tmux_target(tmux_target):
+        return False
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", tmux_target, "#{pane_current_command}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return False
+        current_cmd = (result.stdout or "").strip().lower()
+        return current_cmd in ("claude", "codex", "node", "python", "python3")
+    except Exception:
+        return False
 
 
 def _write_dispatch_artifact(handoff_state, room_state, session_id, tmux_name, target_peer, now, tmux_target=None):

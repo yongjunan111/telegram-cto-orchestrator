@@ -17,6 +17,7 @@ context:
   open_questions: []          # unanswered questions that may affect direction
   constraints: []
   acceptance_criteria: []
+  execution_cwd: ""           # worker execution directory (required for dispatch)
 
 lifecycle:
   current_phase: triage      # triage | planning | execution | review | done

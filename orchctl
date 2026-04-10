@@ -18,6 +18,7 @@ from lib.sessions import cmd_session_list, cmd_session_show, cmd_session_upsert
 from lib.dispatch import cmd_handoff_dispatch_plan, cmd_handoff_dispatch
 from lib.checkpoints import cmd_session_checkpoint
 from lib.bootstrap import cmd_session_bootstrap
+from lib.pipeline import cmd_task_run
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -72,6 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Clear blocker_summary and blocked_by")
     rmem_p.add_argument("--phase", default=None,
                         help="Set room phase (e.g., triage, planning, execution, review, done)")
+    rmem_p.add_argument("--execution-cwd", default=None, dest="execution_cwd",
+                        help="Set worker execution directory (required for dispatch)")
     rmem_p.set_defaults(func=cmd_room_memory)
 
     # room contract
@@ -304,6 +307,21 @@ def build_parser() -> argparse.ArgumentParser:
     sboot_p = session_sub.add_parser("bootstrap", help="Create derived session bootstrap artifact")
     sboot_p.add_argument("session_id", metavar="<session-id>")
     sboot_p.set_defaults(func=cmd_session_bootstrap)
+
+    # task subcommand
+    task_p = sub.add_parser("task", help="Task automation commands")
+    task_sub = task_p.add_subparsers(dest="task_command", metavar="<subcommand>")
+    task_sub.required = True
+
+    # task run
+    trun_p = task_sub.add_parser("run", help="Create room + handoff + dispatch in one step")
+    trun_p.add_argument("--message", required=True, help="Task description / message")
+    trun_p.add_argument("--cwd", required=True, help="Worker execution directory")
+    trun_p.add_argument("--peer", default=None, help="Target peer ID (default: worker-1)")
+    trun_p.add_argument("--priority", default="medium",
+                        choices=["critical", "high", "medium", "low"],
+                        help="Priority (default: medium)")
+    trun_p.set_defaults(func=cmd_task_run)
 
     return parser
 

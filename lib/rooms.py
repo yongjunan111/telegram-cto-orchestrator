@@ -75,6 +75,10 @@ def cmd_room_memory(args):
         updates["lifecycle.current_phase"] = args.phase
         log_changes.append(f"phase updated to: {args.phase}")
 
+    if args.execution_cwd is not None:
+        updates["context.execution_cwd"] = args.execution_cwd
+        log_changes.append(f"execution_cwd updated to: {args.execution_cwd}")
+
     if not updates:
         print("Error: No changes specified. Use --help to see available options.", file=sys.stderr)
         sys.exit(1)
