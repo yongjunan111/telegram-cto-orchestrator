@@ -1,0 +1,72 @@
+"""Configuration loading for orchctl.
+
+Config file: .orchestrator/config.yaml (repo-local)
+Example:     .orchestrator/config.example.yaml
+
+Missing config file is not an error — all values have sensible defaults.
+"""
+import os
+import yaml
+
+from . import storage
+
+
+CONFIG_PATH = os.path.join(storage.ORCHESTRATOR_DIR, "config.yaml")
+CONFIG_EXAMPLE_PATH = os.path.join(storage.ORCHESTRATOR_DIR, "config.example.yaml")
+
+_DEFAULTS = {
+    "worker": {
+        "permissions_mode": "normal",  # normal | skip-permissions
+        "claude_bin": "claude",
+    },
+    "dispatch": {
+        "auto_launch_worker": True,
+        "auto_register_peer": True,
+    },
+}
+
+
+def load_config() -> dict:
+    """Load config from .orchestrator/config.yaml, merged with defaults.
+
+    Returns defaults if the file does not exist or is empty.
+    """
+    config = _deep_copy_defaults()
+    if os.path.isfile(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                user = yaml.safe_load(f) or {}
+            _deep_merge(config, user)
+        except Exception:
+            pass  # Fall back to defaults on parse error
+    return config
+
+
+def _deep_copy_defaults() -> dict:
+    """Return a fresh deep copy of defaults."""
+    import copy
+    return copy.deepcopy(_DEFAULTS)
+
+
+def _deep_merge(base: dict, override: dict) -> None:
+    """Merge override into base in place. Nested dicts are merged recursively."""
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+
+
+def get_worker_permissions_mode() -> str:
+    """Return the configured worker permissions mode."""
+    config = load_config()
+    mode = config.get("worker", {}).get("permissions_mode", "normal")
+    if mode not in ("normal", "skip-permissions"):
+        return "normal"
+    return mode
+
+
+def get_claude_bin() -> str:
+    """Return the configured claude binary path."""
+    config = load_config()
+    return config.get("worker", {}).get("claude_bin", "claude") or "claude"

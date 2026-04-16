@@ -1,0 +1,19 @@
+# orchctl configuration
+# Copy this file to config.yaml and edit as needed.
+# All values shown below are the defaults — you only need to set what you want to change.
+
+worker:
+  # Worker permission mode when launching Claude in dispatched tmux sessions.
+  # "normal"           — Claude runs with standard permission prompts (safe default)
+  # "skip-permissions" — Claude runs with --dangerously-skip-permissions (use for trusted/local setups only)
+  permissions_mode: normal
+
+  # Path to the claude CLI binary. Uses $PATH lookup by default.
+  claude_bin: claude
+
+dispatch:
+  # Automatically launch a Claude worker in the tmux pane after dispatch.
+  auto_launch_worker: true
+
+  # Automatically register unknown peers at dispatch time using the room's execution_cwd.
+  auto_register_peer: true

@@ -19,3 +19,8 @@ dist/
 # Environment
 .env
 .env.local
+.omc/
+.orchestrator/runtime/
+.orchestrator/test-fixtures/
+.orchestrator/config.yaml
+CLAUDE.local.md

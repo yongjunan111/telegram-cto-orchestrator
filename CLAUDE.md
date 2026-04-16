@@ -9,35 +9,6 @@ A protocol/control-plane for AI work delegation. Rooms hold operational state, h
 
 Do not mix them. Wiki and runtime artifacts are compiled/derived views. They never override YAML state or code.
 
-## Working Milestones (Current Loop)
-
-- spec → execute → evidence → review → approval gate → rework
-- Room has 3-layer concerns: memory / contract / discovery
-- Handoff has kind: implementation | discovery
-- Review authority is separated from execution authority; self-review blocked
-- Validation coverage + acceptance coverage are explicit and approval-gated
-- `room readiness` recommends next action from room + handoff state
-- `handoff brief` is discovery-aware
-- Runtime session state tracked in `.orchestrator/runtime/sessions/`
-- `handoff dispatch-plan` / `handoff dispatch` share one decision helper
-- Dispatched tmux sessions get shell hooks + auto-read bootstrap
-- Dispatch hardened against stale tmux bindings, parse-error fresh-fallback, tampered internal refs, and shell injection via send-keys
-- Runtime artifact writers (dispatch/checkpoint/bootstrap/hook) use safe-write helper: containment + symlink-refuse + atomic rename
-- Reuse dispatch hardened with per-session O_EXCL lock + CAS revalidation (no double-claim)
-- Exact tmux pane targeting: fresh captures pane id, reuse revalidates target, hooks/bootstrap use exact pane
-- Legacy sessions (no tmux_target) block duplicate dispatch but are not reusable
-
-## Status
-
-**v1 development phase complete.** Next phase is production use on real work repos.
-
-Remaining operational polish (not blockers):
-1. Hook install / bootstrap success semantics — surface in dispatch result
-2. Bootstrap footer wording — clarify authority boundary
-3. Stale lock / stale session operational cleanup tooling
-4. (Deferred) Provider-specific `/compact` auto-detection
-5. (Deferred) Light mode / automatic session heartbeat / sweeper
-
 ## Invariants
 
 - Never write derived content into authoritative YAML

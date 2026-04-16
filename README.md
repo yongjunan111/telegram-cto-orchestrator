@@ -88,6 +88,10 @@ git clone <repo-url> && cd telegram-cto-orchestrator
 uv sync                    # or: ~/.local/bin/uv sync
 ```
 
+## Quick Start
+
+See [docs/quickstart.md](docs/quickstart.md) for a 5-minute local demo walkthrough (no Telegram required).
+
 ## Usage
 
 Run `orchctl` through the project venv:
@@ -207,6 +211,13 @@ Run `orchctl` through the project venv:
 | `room contract <id> [options]` | Set room-level constraints and acceptance criteria (positive spec); use `--constraint`, `--acceptance-criterion`, `--clear-constraints`, `--clear-acceptance-criteria` |
 | `room discovery <id> [options]` | Update room discovery/planning artifacts |
 | `room readiness <id>` | Derived readiness assessment for next action |
+| `init` | Initialize orchestrator directory structure |
+| `doctor` | Check environment and configuration health |
+| `peer add <id> --type ... --cwd ...` | Register a peer |
+| `peer list` | List registered peers |
+| `peer show <id>` | Show peer details |
+| `peer remove <id>` | Remove a peer |
+| `peer update <id> [options]` | Update peer fields |
 | `session list` | List runtime sessions |
 | `session show <id>` | Show session state |
 | `session upsert <id> [options]` | Create or update session state |
@@ -217,18 +228,19 @@ Run `orchctl` through the project venv:
 
 ## Status
 
-**MVP / pre-alpha.** Core room management CLI (`orchctl`) is functional. State conventions and directory structure are established.
+**v1 — early public harness.** The core room / handoff / review / dispatch loop works, tmux-backed worker dispatch is in place, and the repo is already usable for real operator-driven workflows.
+
+This is still early software. Telegram/runtime wiring still expects some manual operator setup, and the public surface is still evolving.
 
 ### What Is Not Included Yet
 
 - Telegram transport adapter (bot polling, message routing)
 - Plugin packaging or marketplace integration
 - Full MCP server implementation
-- Program and peer management commands
 - Multi-peer coordination protocol
 - Any CI/CD or deployment configuration
 
-These are out of scope for v0.
+These are out of scope for v1.
 
 ---
 

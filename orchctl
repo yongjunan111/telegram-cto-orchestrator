@@ -19,6 +19,9 @@ from lib.dispatch import cmd_handoff_dispatch_plan, cmd_handoff_dispatch
 from lib.checkpoints import cmd_session_checkpoint
 from lib.bootstrap import cmd_session_bootstrap
 from lib.pipeline import cmd_task_run
+from lib.init import cmd_init
+from lib.doctor import cmd_doctor
+from lib.peers import cmd_peer_add, cmd_peer_list, cmd_peer_show, cmd_peer_remove, cmd_peer_update
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -322,6 +325,57 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=["critical", "high", "medium", "low"],
                         help="Priority (default: medium)")
     trun_p.set_defaults(func=cmd_task_run)
+
+    # init subcommand
+    init_p = sub.add_parser("init", help="Initialize orchestrator directory structure")
+    init_p.set_defaults(func=cmd_init)
+
+    # doctor subcommand
+    doctor_p = sub.add_parser("doctor", help="Check environment and configuration health")
+    doctor_p.set_defaults(func=cmd_doctor)
+
+    # peer subcommand
+    peer_p = sub.add_parser("peer", help="Peer management commands")
+    peer_sub = peer_p.add_subparsers(dest="peer_command", metavar="<subcommand>")
+    peer_sub.required = True
+
+    # peer add
+    padd_p = peer_sub.add_parser("add", help="Register a new peer")
+    padd_p.add_argument("peer_id", metavar="<peer-id>")
+    padd_p.add_argument("--name", default=None, help="Human-readable peer name")
+    padd_p.add_argument("--type", default="worker", choices=["worker", "reviewer", "specialist"],
+                        dest="peer_type", help="Peer type (default: worker)")
+    padd_p.add_argument("--cwd", default=None, help="Peer working directory")
+    padd_p.add_argument("--capabilities", default=None,
+                        help="Comma-separated list of capabilities")
+    padd_p.set_defaults(func=cmd_peer_add)
+
+    # peer list
+    plist_p = peer_sub.add_parser("list", help="List all peers")
+    plist_p.set_defaults(func=cmd_peer_list)
+
+    # peer show
+    pshow_p = peer_sub.add_parser("show", help="Show peer details")
+    pshow_p.add_argument("peer_id", metavar="<peer-id>")
+    pshow_p.set_defaults(func=cmd_peer_show)
+
+    # peer remove
+    premove_p = peer_sub.add_parser("remove", help="Remove a peer")
+    premove_p.add_argument("peer_id", metavar="<peer-id>")
+    premove_p.set_defaults(func=cmd_peer_remove)
+
+    # peer update
+    pupdate_p = peer_sub.add_parser("update", help="Update peer attributes")
+    pupdate_p.add_argument("peer_id", metavar="<peer-id>")
+    pupdate_p.add_argument("--name", default=None, help="Human-readable peer name")
+    pupdate_p.add_argument("--type", default=None, choices=["worker", "reviewer", "specialist"],
+                           dest="peer_type", help="Peer type")
+    pupdate_p.add_argument("--cwd", default=None, help="Peer working directory")
+    pupdate_p.add_argument("--status", default=None, choices=["available", "busy", "offline"],
+                           help="Peer status")
+    pupdate_p.add_argument("--capabilities", default=None,
+                           help="Comma-separated list of capabilities")
+    pupdate_p.set_defaults(func=cmd_peer_update)
 
     return parser
 
