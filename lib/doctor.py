@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 from . import storage
-from .config import CONFIG_PATH, load_config
+from .config import CONFIG_PATH, load_config, ConfigError
 
 
 def cmd_doctor(args):
@@ -87,7 +87,10 @@ def _check_tmux():
 
 
 def _check_claude():
-    config = load_config()
+    try:
+        config = load_config()
+    except ConfigError:
+        config = {}
     claude_bin = config.get("worker", {}).get("claude_bin", "claude")
 
     path = shutil.which(claude_bin)
@@ -157,5 +160,5 @@ def _check_config():
             mode = config.get("worker", {}).get("permissions_mode", "normal")
             return "ok", f"permissions_mode={mode}"
         except Exception as e:
-            return "warn", f"Config exists but has errors: {e}"
+            return "fail", f"Config parse error: {e}"
     return "warn", f"No config.yaml found (using defaults). Copy config.example.yaml to config.yaml to customize."

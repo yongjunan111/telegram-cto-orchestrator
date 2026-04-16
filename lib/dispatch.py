@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 from . import storage
 from .handoffs import _load_handoff_with_room, _get_handoff_kind, _derive_review_state
 from .validators import validate_slug, is_slug_safe
+from .config import load_config, ConfigError
 
 
 _TMUX_NAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
@@ -42,6 +43,28 @@ def cmd_handoff_dispatch_plan(args):
 
     # Load peer registry
     peer_entry = _load_peer_entry(target_peer)
+
+    # Check if auto-registration would apply
+    try:
+        config = load_config()
+    except ConfigError:
+        config = {}
+    auto_register = config.get("dispatch", {}).get("auto_register_peer", True)
+
+    if peer_entry is None and auto_register:
+        # Simulate what _ensure_peer would do: check execution_cwd
+        execution_cwd = (room_state.get("context") or {}).get("execution_cwd") or ""
+        if execution_cwd and os.path.isdir(execution_cwd):
+            # Plan should reflect that peer would be auto-registered
+            peer_entry = {
+                "id": target_peer,
+                "name": target_peer.replace("-", " ").title(),
+                "type": "worker",
+                "cwd": execution_cwd,
+                "capabilities": [],
+                "status": "available",
+                "_auto_registered": True,  # marker for plan rendering
+            }
 
     # Load all sessions
     sessions, session_parse_errors = _scan_sessions()
@@ -204,6 +227,17 @@ def _ensure_peer(peer_id: str, room_state: dict):
     existing = _load_peer_entry(peer_id)
     if existing is not None:
         return existing, None
+
+    # Check config: is auto-registration enabled?
+    try:
+        config = load_config()
+    except ConfigError:
+        config = {}
+    if not config.get("dispatch", {}).get("auto_register_peer", True):
+        return None, (
+            f"Peer '{peer_id}' not in registry and auto_register_peer is disabled in config. "
+            f"Register manually: orchctl peer add {peer_id} --type worker --cwd /path"
+        )
 
     # Auto-register: require execution_cwd from room state
     execution_cwd = (room_state.get("context") or {}).get("execution_cwd") or ""
@@ -1097,6 +1131,14 @@ def _launch_worker(tmux_target: str, session_id: str, bootstrap_path: str) -> No
     if not _tmux_target_exists(tmux_target):
         return
 
+    # Check config: is auto-launch enabled?
+    try:
+        config = load_config()
+    except ConfigError:
+        config = {}
+    if not config.get("dispatch", {}).get("auto_launch_worker", True):
+        return
+
     if not bootstrap_path or not os.path.isfile(bootstrap_path):
         _tmux_send_keys(tmux_target, "echo 'Bootstrap artifact not available — worker not launched.'")
         return
@@ -1210,6 +1252,8 @@ def _render_dispatch_plan(
 
     if peer_entry is not None:
         lines.append(f"- **Peer type:** {peer_entry.get('type', '(unknown)')}")
+        if (peer_entry or {}).get("_auto_registered"):
+            lines.append("- **Note:** Peer will be auto-registered at dispatch time")
     else:
         lines.append("- **Peer type:** (NOT FOUND in registry)")
 

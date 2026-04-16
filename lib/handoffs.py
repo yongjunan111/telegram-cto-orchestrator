@@ -1547,10 +1547,18 @@ def cmd_handoff_complete(args):
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            evidence_text = evidence.strip()
+            if not evidence_text:
+                print(
+                    f"Error: Evidence for validation index {idx} is empty. "
+                    f"Provide actual evidence text after the colon.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             parsed_coverage.append({
                 "validation_index": idx,
                 "validation_text": task_validation[idx - 1],
-                "evidence": evidence.strip(),
+                "evidence": evidence_text,
             })
 
     # Parse and validate task criterion covers
@@ -1575,10 +1583,18 @@ def cmd_handoff_complete(args):
             if idx < 1 or idx > len(task_criteria):
                 print(f"Error: Task criterion index {idx} out of range. Valid: 1-{len(task_criteria)}.", file=sys.stderr)
                 sys.exit(1)
+            evidence_text = evidence.strip()
+            if not evidence_text:
+                print(
+                    f"Error: Evidence for task criterion index {idx} is empty. "
+                    f"Provide actual evidence text after the colon.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             parsed_task_cov.append({
                 "criterion_index": idx,
                 "criterion_text": task_criteria[idx - 1],
-                "evidence": evidence.strip(),
+                "evidence": evidence_text,
             })
 
     parsed_room_cov = []
@@ -1599,10 +1615,18 @@ def cmd_handoff_complete(args):
             if idx < 1 or idx > len(room_criteria):
                 print(f"Error: Room criterion index {idx} out of range. Valid: 1-{len(room_criteria)}.", file=sys.stderr)
                 sys.exit(1)
+            evidence_text = evidence.strip()
+            if not evidence_text:
+                print(
+                    f"Error: Evidence for room criterion index {idx} is empty. "
+                    f"Provide actual evidence text after the colon.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             parsed_room_cov.append({
                 "criterion_index": idx,
                 "criterion_text": room_criteria[idx - 1],
-                "evidence": evidence.strip(),
+                "evidence": evidence_text,
             })
 
     now = storage.now_iso()

@@ -176,7 +176,8 @@ This creates a tmux session for `demo-worker` with the working directory set to 
 **Permissions mode:** By default, Claude prompts for permission on tool use. For trusted local use, add this to `.orchestrator/config.yaml`:
 
 ```yaml
-permissions_mode: skip-permissions
+worker:
+  permissions_mode: skip-permissions
 ```
 
 ---
@@ -199,7 +200,25 @@ Detach with `Ctrl-b d`.
 
 ---
 
-## 12. Complete the Handoff
+## 12. Claim the Handoff
+
+Before completing a handoff, the worker must claim it (transition from `open` to `claimed`):
+
+```bash
+orchctl handoff claim demo-impl --by demo-worker
+```
+
+Verify the status changed:
+
+```bash
+orchctl handoff show demo-impl
+```
+
+The status should now be `claimed`.
+
+---
+
+## 13. Complete the Handoff
 
 Once the work is done (manually or by the worker), mark the handoff complete:
 
@@ -218,7 +237,7 @@ orchctl room show demo-task
 
 ---
 
-## 13. Clean Up
+## 14. Clean Up
 
 Kill the tmux session:
 
@@ -243,7 +262,8 @@ orchctl peer remove demo-worker
 
 ## What's Next
 
-- Add a `type: reviewer` peer and try `orchctl handoff review` + `orchctl handoff approve`
+- The full handoff lifecycle is: `create` → `dispatch` → `claim` → `complete` → `review` → `approve`. This guide covered the first five steps.
+- Add a `type: reviewer` peer and try `orchctl handoff review` + `orchctl handoff approve` to complete the cycle
 - Set `--kind discovery` on a handoff to use the discovery workflow
 - Read `docs/architecture.md` for the full design
 - Set up Telegram transport if you want remote access (see repository README)
