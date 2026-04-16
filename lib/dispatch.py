@@ -47,8 +47,9 @@ def cmd_handoff_dispatch_plan(args):
     # Check if auto-registration would apply
     try:
         config = load_config()
-    except ConfigError:
-        config = {}
+    except ConfigError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     auto_register = config.get("dispatch", {}).get("auto_register_peer", True)
 
     if peer_entry is None and auto_register:
@@ -231,8 +232,8 @@ def _ensure_peer(peer_id: str, room_state: dict):
     # Check config: is auto-registration enabled?
     try:
         config = load_config()
-    except ConfigError:
-        config = {}
+    except ConfigError as e:
+        return None, f"Configuration error: {e}"
     if not config.get("dispatch", {}).get("auto_register_peer", True):
         return None, (
             f"Peer '{peer_id}' not in registry and auto_register_peer is disabled in config. "
@@ -1134,8 +1135,9 @@ def _launch_worker(tmux_target: str, session_id: str, bootstrap_path: str) -> No
     # Check config: is auto-launch enabled?
     try:
         config = load_config()
-    except ConfigError:
-        config = {}
+    except ConfigError as e:
+        print(f"Warning: config error, skipping worker launch: {e}", file=sys.stderr)
+        return
     if not config.get("dispatch", {}).get("auto_launch_worker", True):
         return
 

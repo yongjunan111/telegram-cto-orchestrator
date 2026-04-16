@@ -16,7 +16,7 @@ This guide walks you through a complete local orchestration demo in 5–10 minut
 ## 1. Install
 
 ```bash
-git clone <repo-url> && cd telegram-cto-orchestrator
+git clone https://github.com/yongjunan111/telegram-cto-orchestrator.git && cd telegram-cto-orchestrator
 uv sync
 ```
 
@@ -171,9 +171,9 @@ orchctl handoff dispatch demo-impl
 
 This creates a tmux session for `demo-worker` with the working directory set to `/tmp/demo-project`. The session receives shell environment hooks and a bootstrap document injected as context.
 
-**Worker auto-launch:** If `claude` CLI is installed and the peer's `permissions_mode` is configured, a Claude worker will be launched automatically inside the tmux session. If `claude` is not installed, the tmux session is created but you must start the worker manually.
+**Worker auto-launch:** If `claude` CLI is installed, a Claude worker will be launched automatically inside the tmux session. This is controlled by the global config option `dispatch.auto_launch_worker` (default: `true`). If `claude` is not installed, the tmux session is created but you must start the worker manually. To disable auto-launch, set `dispatch.auto_launch_worker: false` in `.orchestrator/config.yaml`.
 
-**Permissions mode:** By default, Claude prompts for permission on tool use. For trusted local use, add this to `.orchestrator/config.yaml`:
+**Permissions mode:** By default, Claude prompts for permission on tool use. This is a global setting in `.orchestrator/config.yaml` (not per-peer). For trusted local use:
 
 ```yaml
 worker:

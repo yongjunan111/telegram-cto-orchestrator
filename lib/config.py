@@ -68,16 +68,3 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[key] = value
 
 
-def get_worker_permissions_mode() -> str:
-    """Return the configured worker permissions mode."""
-    config = load_config()
-    mode = config.get("worker", {}).get("permissions_mode", "normal")
-    if mode not in ("normal", "skip-permissions"):
-        return "normal"
-    return mode
-
-
-def get_claude_bin() -> str:
-    """Return the configured claude binary path."""
-    config = load_config()
-    return config.get("worker", {}).get("claude_bin", "claude") or "claude"

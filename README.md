@@ -82,7 +82,7 @@ LICENSE
 Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone <repo-url> && cd telegram-cto-orchestrator
+git clone https://github.com/yongjunan111/telegram-cto-orchestrator.git && cd telegram-cto-orchestrator
 
 # Install dependencies (if uv is not on PATH, prefix with its full path)
 uv sync                    # or: ~/.local/bin/uv sync
