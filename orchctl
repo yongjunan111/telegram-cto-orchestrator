@@ -22,6 +22,7 @@ from lib.pipeline import cmd_task_run
 from lib.init import cmd_init
 from lib.doctor import cmd_doctor
 from lib.peers import cmd_peer_add, cmd_peer_list, cmd_peer_show, cmd_peer_remove, cmd_peer_update
+from lib.wiki_suggest import cmd_handoff_wiki_suggest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -264,6 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
     hdisp_p = handoff_sub.add_parser("dispatch", help="Execute handoff dispatch (tmux + session state)")
     hdisp_p.add_argument("handoff_id", metavar="<handoff-id>")
     hdisp_p.set_defaults(func=cmd_handoff_dispatch)
+
+    # handoff wiki-suggest
+    hwiki_p = handoff_sub.add_parser("wiki-suggest", help="Suggest wiki updates from handoff cycle")
+    hwiki_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hwiki_p.set_defaults(func=cmd_handoff_wiki_suggest)
 
     # session subcommand
     session_p = sub.add_parser("session", help="Runtime session state commands")

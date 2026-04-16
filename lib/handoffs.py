@@ -1188,6 +1188,10 @@ def cmd_handoff_approve(args):
     if note:
         print(f"  note: {note}")
 
+    # Wiki suggestion (best-effort, after approve output)
+    from .wiki_suggest import _try_wiki_suggest_auto
+    _try_wiki_suggest_auto(handoff_id, handoff_state, room_state, "approve")
+
 
 def cmd_handoff_request_changes(args):
     handoff_id = args.handoff_id
@@ -1359,6 +1363,11 @@ def cmd_handoff_rework(args):
     print(f"  room:     {room_id}")
     print(f"  to:       {assignee}")
     print(f"  priority: {source_h.get('priority', 'medium')}")
+
+    # Wiki suggestion (best-effort, after rework output)
+    # Use source handoff for wiki suggest, not the new rework handoff
+    from .wiki_suggest import _try_wiki_suggest_auto
+    _try_wiki_suggest_auto(source_id, source_state, room_state, "rework")
 
 
 # ---------------------------------------------------------------------------

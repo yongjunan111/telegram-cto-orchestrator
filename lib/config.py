@@ -29,6 +29,9 @@ _DEFAULTS = {
         "auto_launch_worker": True,
         "auto_register_peer": True,
     },
+    "wiki": {
+        "auto_suggest": True,
+    },
 }
 
 

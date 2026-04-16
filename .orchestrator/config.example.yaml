@@ -17,3 +17,7 @@ dispatch:
 
   # Automatically register unknown peers at dispatch time using the room's execution_cwd.
   auto_register_peer: true
+
+# Wiki accumulation suggestions after approve/rework
+# wiki:
+#   auto_suggest: true
