@@ -9,7 +9,7 @@ peers: []
 # - id: "backend-worker"
 #   name: "Backend Worker"
 #   type: worker              # worker | reviewer | specialist
-#   cwd: "/home/user/projects/backend"
+#   cwd: "/path/to/backend-repo"
 #   capabilities:
 #     - python
 #     - fastapi
