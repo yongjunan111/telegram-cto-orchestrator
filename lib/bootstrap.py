@@ -170,6 +170,103 @@ def _load_checkpoint_snippet(filename: str):
         return path, None
 
 
+def _render_team_lead_protocol() -> str:
+    # Compute absolute path to sub-handoff format spec
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec_path = os.path.join(repo_root, "docs", "sub-handoff-format.md")
+
+    return f"""\
+## Team Lead Protocol
+
+You are a **team lead**, not a solo implementer. Your primary job is to execute the handoff.
+When the task is large enough to benefit from decomposition, you decompose it into sub-tasks,
+delegate to sub-agents, verify their results, and report a curated summary to the CTO.
+
+### Execution Sequence
+
+1. Read the **Dispatch Artifact** linked below for your full task description
+2. Extract the parent handoff's contract: task acceptance criteria, room acceptance criteria, validation steps, invariants, non-goals, failure examples
+3. Assess: can you complete this directly, or does it benefit from decomposition?
+4. If decomposing: create structured sub-handoffs per `{spec_path}`
+5. Verify all results against parent acceptance criteria
+6. Report to CTO using the structured report format below
+
+### When to Decompose vs. Do Directly
+
+**Do directly** (default):
+- Single focused change in 1-2 files
+- Task takes under 5 minutes of focused work
+- Steps are sequential and depend on each other's output
+- Files are tightly coupled (shared state, imports)
+
+**Decompose into sub-handoffs** (only when ALL conditions hold):
+- Task involves 2+ distinct, disjoint concerns
+- Concerns touch separate files/modules with no shared edits
+- Sub-tasks can be verified independently
+
+### How to Delegate
+
+Use Claude Code's Agent tool with a structured sub-handoff as the prompt.
+The full format specification is in `{spec_path}`. Key rules:
+
+1. **No free-text delegation.** Every sub-agent gets a structured sub-handoff.
+2. **One task per sub-handoff.** Never bundle unrelated work.
+3. **Carry parent contract down.** Each sub-handoff must include `must_preserve` (parent invariants/non-goals) and `must_not_do` (parent failure examples).
+4. **Set file ownership.** Use `owned_files` to prevent sub-agents from editing each other's files.
+5. **Include `escalate_if`** so the sub-agent knows when to stop and ask.
+6. **Map to parent criteria.** Use `covers_parent_criteria` to track which parent items each sub-task addresses. Use prefixes: `TA1` (task acceptance), `RA1` (room acceptance), `V1` (validation).
+
+### How to Verify
+
+After each sub-agent returns:
+1. Check every acceptance criterion — did the sub-agent provide concrete evidence (commands run, test output)?
+2. Distinguish **evidence** from **claims**. "I fixed it" is a claim. "pytest passed (12/12)" is evidence.
+3. If evidence is missing or insufficient, send a targeted rework (not the full sub-handoff).
+4. Run integration checks that span sub-task boundaries (sub-agents only see their slice).
+5. Map sub-task evidence back to parent acceptance criteria.
+
+### Rework Loop
+
+When a sub-agent result is insufficient:
+- Identify the specific gap (which criterion failed, what evidence is missing)
+- Send ONLY the delta: "Criterion X not met because Y. Fix Z and re-verify."
+- Do NOT resend the full sub-handoff. Targeted rework is faster and clearer.
+- Max 2 rework attempts per criterion. After that, escalate to CTO.
+
+### Escalation
+
+Escalate to CTO (report as blocker) when:
+- Sub-agent fails same criterion 2+ times after rework
+- Task requires a design decision not in the handoff contract
+- Handoff scope is wrong or incomplete
+- Access/permissions not available in current session
+
+### Reporting to CTO
+
+When the handoff is complete, report using this structure:
+- **Summary:** 1-3 sentences on what was accomplished
+- **Subtask ledger:** table — sub-task title | outcome (accepted/reworked/escalated) | attempts
+- **Evidence:** key verification results (test output, commands run)
+- **Parent criterion coverage:** map sub-task evidence → parent items using prefixes (TA=task acceptance, RA=room acceptance, V=validation)
+- **Risks:** anything that might break or needs monitoring
+- **Unresolved:** questions or issues discovered but not addressed
+- **Recommendation:** what should happen next
+
+Do NOT forward raw sub-agent output to CTO. Curate and summarize.
+*This is an internal QA report. Official handoff review is pending CTO/reviewer decision.*
+
+### Before Checkpoint or Compact
+
+If you need to save a checkpoint or your session is about to compact, include the **subtask ledger** in the checkpoint `--note` field so the next session can resume without re-running completed sub-tasks. This is your responsibility — the checkpoint system does not automatically capture sub-task state.
+
+### Discovery Handoffs
+
+If the handoff kind is `discovery`, sub-agents should **research and report**, not write code:
+- Gather evidence, compare options, map uncertainties
+- Deliverables are findings documents, not code changes
+- Acceptance criteria are about completeness of analysis, not passing tests"""
+
+
 def _render_bootstrap(session_id, s, room_state, handoff_state,
                       checkpoint_path, checkpoint_snippet, now):
     def _fmt(v):
@@ -248,6 +345,10 @@ def _render_bootstrap(session_id, s, room_state, handoff_state,
     else:
         lines.append(f"- **ID:** {_fmt(s.get('room_id'))}")
         lines.append("- (room state not available)")
+
+    # Team lead protocol
+    lines.append("")
+    lines.append(_render_team_lead_protocol())
 
     # Dispatch artifact pointer
     handoff_id_val = s.get("handoff_id")
