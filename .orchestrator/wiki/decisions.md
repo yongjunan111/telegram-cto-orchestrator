@@ -176,3 +176,30 @@ It is not the source of truth; it is the design rationale layer.
 - Helpers invoked from inside dispatch execution (`_write_dispatch_artifact`, `safe_write_text`, etc.) must not call `sys.exit`.
 - Reason: if a helper exits mid-dispatch, the process dies before cleanup — tmux session stays live, session YAML stays in the wrong state, rollback never runs.
 - Consequence: helpers raise exceptions; callers decide whether to fail the command, warn, or roll back. Only top-level command functions are allowed to `sys.exit`.
+
+## Wiki Suggestions Are Suggest-Only
+
+- `wiki-suggest` extracts structured hints from completed handoff cycles but never writes to wiki files.
+- The orchestrator (CTO session) reads suggestions and decides what to accumulate in the wiki.
+- Reason: deterministic code cannot produce the quality of synthesis that an LLM curator can. Auto-generated text quickly degrades wiki quality into "auto-generated dump."
+- Consequence: wiki files remain hand-curated by the orchestrator session; `wiki-suggest` only surfaces candidates.
+
+## Fingerprint Storage For Accurate Dedupe
+
+- Wiki-suggest stores normalized hint fingerprints in handoff state (`wiki_suggest.generated_hints`) after generating suggestions.
+- Dedupe reads these stored fingerprints from prior handoffs rather than re-generating hints from current room state.
+- Reason: re-generating from current room state incorrectly projects current decisions/discovery onto past cycles, causing new hints to be false-positively deduped. Stored fingerprints capture what was actually suggested at cycle time.
+- Consequence: legacy handoffs without stored fingerprints get no dedupe applied (safe default).
+
+## Manual Wiki-Suggest Is Read-Only
+
+- `orchctl handoff wiki-suggest <id>` computes and displays suggestions but does not write fingerprints to handoff state.
+- Only the auto hook (`_try_wiki_suggest_auto`) writes fingerprints, and only at approve/rework time.
+- Reason: manual re-runs use current room state, which may have changed since the original cycle. Writing fingerprints at re-run time would overwrite the original cycle-time record, corrupting future dedupe.
+- Consequence: fingerprint ownership is split — auto hook = write, manual command = read-only. This is enforced by code structure, not by a runtime check.
+
+## Rework Lineage Walks The Actual Chain
+
+- When `rework_of` is set, `detect_continuity` walks the `rework_of` chain backwards to collect ancestors, rather than scanning all room handoffs.
+- Reason: scanning the full room includes unrelated handoffs, inflating cycle count and producing false pattern suggestions.
+- Consequence: `prior_handoffs` in rework_lineage mode contains only actual chain ancestors (oldest first). Broken chains fail-soft with a partial result; no room-wide fallback.

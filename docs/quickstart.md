@@ -267,3 +267,4 @@ orchctl peer remove demo-worker
 - Set `--kind discovery` on a handoff to use the discovery workflow
 - Read `docs/architecture.md` for the full design
 - Set up Telegram transport if you want remote access (see repository README)
+- After `approve`, the orchestrator automatically suggests wiki updates based on the completed cycle. Run `orchctl handoff wiki-suggest <id>` to see suggestions manually.

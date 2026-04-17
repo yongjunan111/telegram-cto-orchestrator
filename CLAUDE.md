@@ -24,6 +24,10 @@ Do not mix them. Wiki and runtime artifacts are compiled/derived views. They nev
 - Room blocker is a hard stop for dispatch allocation
 - Parse errors in runtime session state → `cannot_allocate` (never fresh fallback)
 - Stale/dead tmux bindings are never used for wait or reuse decisions
+- wiki-suggest is suggestion-only — never writes to wiki files directly
+- Fingerprint ownership: manual `wiki-suggest` command is read-only; only the auto hook after approve/rework writes `wiki_suggest.generated_hints` to handoff state
+- Dedupe reads stored fingerprints from prior handoffs, never re-generates from current room state
+- Wiki-suggest failure never affects the parent approve/rework operation (best-effort)
 
 ## Reference
 

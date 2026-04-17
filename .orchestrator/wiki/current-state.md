@@ -28,6 +28,11 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
 - `session bootstrap` writes a derived startup packet under `.orchestrator/runtime/bootstrap/<session-id>.md`. Combines session/room/handoff state with the latest relevant checkpoint (deterministic selection).
 - Dispatched tmux sessions get injected shell hooks (`orch_checkpoint`, `orch_compact`, `orch_bootstrap`, EXIT trap). Hook file is regenerated from `lib/session_hooks.sh.template` on every dispatch.
 - Fresh and reuse dispatch both auto-run `session bootstrap` and display the artifact in the tmux session.
+- `handoff wiki-suggest` is a read-only suggestion command that extracts structured wiki update hints from completed handoff cycles (approve/rework).
+- Wiki suggestions are auto-triggered after `handoff approve` and `handoff rework` via best-effort hooks. Suggestions cover five wiki pages: lessons, decisions, deferred, patterns, current-state.
+- Continuity detection determines whether to suggest: `rework_lineage` walks the actual `rework_of` chain; `same_room_prior_review` checks for reviewed handoffs in the same room; standalone tasks are skipped.
+- Dedupe uses stored fingerprints (`wiki_suggest.generated_hints` in handoff state) written by the auto hook at approve/rework time. Manual `wiki-suggest` is read-only and does not store fingerprints.
+- Suggest strength: approve = high (all pages), rework = medium (lessons/patterns only).
 
 ## Shipped Milestones
 
@@ -61,6 +66,7 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
 - `2c1e676` harden runtime artifact writes against symlink escapes
 - `c2e52f1` harden reuse dispatch locking and revalidation
 - `6f03979` require exact tmux pane targets for dispatch reuse
+- `76ab961` wiki suggestion hooks for continuous handoff cycles
 
 ## Current Shape Of The System
 
@@ -78,6 +84,12 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
   - derived bootstrap artifacts (next-session startup packets)
 - Shell hook layer injects `orch_checkpoint`, `orch_compact`, `orch_bootstrap`, and an EXIT trap into every dispatched session.
 - Bootstrap auto-read displays the derived startup packet on dispatch, covering both fresh and reuse paths.
+- Wiki suggestion layer exists as an automatic post-cycle hook:
+  - Triggers after approve (high strength) and rework (medium strength)
+  - Extracts hints per wiki page from handoff/room state
+  - Dedupes via stored fingerprints in handoff state
+  - Manual command is read-only; auto hook writes fingerprints
+  - Failure never affects parent approve/rework operation
 - Dispatch decision is hardened: stale/dead tmux bindings are skipped for wait and reuse decisions; session parse errors fail closed as `cannot_allocate` (no fresh fallback); internal YAML references are re-validated on read before filename or subprocess use; tmux injected shell commands are `shlex.quote`-safe.
 - Runtime derived artifact writers route through `storage.safe_write_text` with containment + symlink-refuse + atomic rename.
 - Reuse dispatch is hardened with per-session `O_EXCL` lock + CAS revalidation: two parallel dispatches cannot double-claim the same idle session. Lock path safety enforces symlink refusal, runtime-root containment, and payload write failure cleanup.
@@ -86,7 +98,7 @@ Authoritative truth remains code, YAML state under `.orchestrator/`, and git his
 
 ## Status
 
-**v1 development phase complete.** The dispatch/runtime/session layer is production-ready for first real-world use. Remaining items are operational polish, not blockers.
+**v1 development phase complete. Wiki suggestion hooks shipped.** The dispatch/runtime/session layer is production-ready for first real-world use. Remaining items are operational polish, not blockers.
 
 Remaining polish:
 1. Hook install / bootstrap success semantics — surface in dispatch result instead of silent warnings.
