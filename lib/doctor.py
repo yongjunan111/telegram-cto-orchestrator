@@ -86,6 +86,12 @@ def _check_tmux():
         return "warn", f"tmux found at {path} but version check failed"
 
 
+_CLAUDE_COMMON_PATHS = [
+    os.path.expanduser("~/.local/bin/claude"),
+    "/usr/local/bin/claude",
+]
+
+
 def _check_claude():
     try:
         config = load_config()
@@ -93,15 +99,38 @@ def _check_claude():
         config = {}
     claude_bin = config.get("worker", {}).get("claude_bin", "claude")
 
+    # 1. If config specifies an absolute path, check that directly
+    if os.path.isabs(claude_bin):
+        if os.path.isfile(claude_bin) and os.access(claude_bin, os.X_OK):
+            return _check_claude_version(claude_bin, "(from config)")
+        return "fail", f"'{claude_bin}' (from config) not found or not executable"
+
+    # 2. Try PATH lookup
     path = shutil.which(claude_bin)
-    if not path:
-        if claude_bin != "claude":
-            return "fail", f"'{claude_bin}' (from config) not found in PATH"
-        return "warn", "claude CLI not found in PATH. Worker dispatch will not auto-launch."
+    if path:
+        return _check_claude_version(path, "")
+
+    # 3. If default 'claude' not in PATH, check common install locations
+    if claude_bin == "claude":
+        for candidate in _CLAUDE_COMMON_PATHS:
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return _check_claude_version(
+                    candidate,
+                    f"(not in PATH — consider setting worker.claude_bin: {candidate} in config)",
+                )
+
+    if claude_bin != "claude":
+        return "fail", f"'{claude_bin}' (from config) not found in PATH"
+    return "warn", "claude CLI not found in PATH or common locations. Worker dispatch will not auto-launch."
+
+
+def _check_claude_version(path: str, note: str):
+    """Try to get version from a claude binary at the given path."""
     try:
         result = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10)
         version = result.stdout.strip() if result.returncode == 0 else "installed"
-        return "ok", f"{version} ({path})"
+        suffix = f" {note}" if note else ""
+        return "ok", f"{version} ({path}){suffix}"
     except Exception:
         return "ok", f"Found at {path} (version check skipped)"
 

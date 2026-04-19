@@ -35,6 +35,30 @@ def _load_config_standalone():
         return {}
 
 
+def build_cmd(bootstrap_path: str, config: dict) -> list:
+    """Build the claude CLI command from config. Separated for testability."""
+    claude_bin = config.get("worker", {}).get("claude_bin", "claude") or "claude"
+    mode = config.get("worker", {}).get("permissions_mode", "normal")
+
+    cmd = [claude_bin]
+    if mode == "skip-permissions":
+        cmd.append("--dangerously-skip-permissions")
+    elif mode == "auto":
+        cmd.extend(["--permission-mode", "auto"])
+
+    # Set model from config (e.g., "opus" for team lead sessions)
+    model = config.get("worker", {}).get("model")
+    if model:
+        cmd.extend(["--model", str(model)])
+
+    # MCP servers: claude-peers is typically configured globally via 'claude mcp add'.
+    # Workers inherit global MCP config automatically.
+
+    prompt = f"Read {bootstrap_path} for your assignment and execute the task described in it."
+    cmd.append(prompt)
+    return cmd
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: worker_launch.py <bootstrap-path>", file=sys.stderr)
@@ -46,16 +70,9 @@ def main():
         print(f"Error: bootstrap file not found: {bootstrap_path}", file=sys.stderr)
         sys.exit(1)
 
-    prompt = f"Read {bootstrap_path} for your assignment and execute the task described in it."
-
     config = _load_config_standalone()
-    claude_bin = config.get("worker", {}).get("claude_bin", "claude") or "claude"
-    mode = config.get("worker", {}).get("permissions_mode", "normal")
-
-    cmd = [claude_bin]
-    if mode == "skip-permissions":
-        cmd.append("--dangerously-skip-permissions")
-    cmd.append(prompt)
+    cmd = build_cmd(bootstrap_path, config)
+    claude_bin = cmd[0]
 
     os.execvp(claude_bin, cmd)
 

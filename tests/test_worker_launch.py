@@ -222,5 +222,63 @@ class TestLaunchWorkerDirect(unittest.TestCase):
         self.assertEqual(len(self.send_keys_calls), 0)
 
 
+class TestBuildCmd(unittest.TestCase):
+    """Unit tests for worker_launch.build_cmd — verifies CLI arg assembly."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(_REPO_ROOT, "lib"))
+
+    def test_normal_mode_no_permission_flag(self):
+        from worker_launch import build_cmd
+        cmd = build_cmd("/tmp/boot.md", {"worker": {"permissions_mode": "normal"}})
+        self.assertEqual(cmd[0], "claude")
+        self.assertNotIn("--permission-mode", cmd)
+        self.assertNotIn("--dangerously-skip-permissions", cmd)
+        self.assertIn("Read /tmp/boot.md", cmd[-1])
+
+    def test_auto_mode_adds_permission_flag(self):
+        from worker_launch import build_cmd
+        cmd = build_cmd("/tmp/boot.md", {"worker": {"permissions_mode": "auto"}})
+        idx = cmd.index("--permission-mode")
+        self.assertEqual(cmd[idx + 1], "auto")
+
+    def test_skip_permissions_mode(self):
+        from worker_launch import build_cmd
+        cmd = build_cmd("/tmp/boot.md", {"worker": {"permissions_mode": "skip-permissions"}})
+        self.assertIn("--dangerously-skip-permissions", cmd)
+        self.assertNotIn("--permission-mode", cmd)
+
+    def test_model_added_when_configured(self):
+        from worker_launch import build_cmd
+        cmd = build_cmd("/tmp/boot.md", {"worker": {"model": "opus"}})
+        idx = cmd.index("--model")
+        self.assertEqual(cmd[idx + 1], "opus")
+
+    def test_no_model_when_not_configured(self):
+        from worker_launch import build_cmd
+        cmd = build_cmd("/tmp/boot.md", {"worker": {}})
+        self.assertNotIn("--model", cmd)
+
+    def test_auto_plus_model(self):
+        from worker_launch import build_cmd
+        cmd = build_cmd("/tmp/boot.md", {"worker": {"permissions_mode": "auto", "model": "opus"}})
+        self.assertIn("--permission-mode", cmd)
+        self.assertIn("--model", cmd)
+        self.assertEqual(cmd[cmd.index("--permission-mode") + 1], "auto")
+        self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
+
+    def test_empty_config(self):
+        from worker_launch import build_cmd
+        cmd = build_cmd("/tmp/boot.md", {})
+        self.assertEqual(cmd[0], "claude")
+        self.assertNotIn("--permission-mode", cmd)
+        self.assertNotIn("--model", cmd)
+
+    def test_custom_claude_bin(self):
+        from worker_launch import build_cmd
+        cmd = build_cmd("/tmp/boot.md", {"worker": {"claude_bin": "/usr/local/bin/claude"}})
+        self.assertEqual(cmd[0], "/usr/local/bin/claude")
+
+
 if __name__ == "__main__":
     unittest.main()

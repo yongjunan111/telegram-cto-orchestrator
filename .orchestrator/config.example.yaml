@@ -5,10 +5,17 @@
 worker:
   # Worker permission mode when launching Claude in dispatched tmux sessions.
   # "normal"           — Claude runs with standard permission prompts (safe default)
+  # "auto"             — Claude auto-accepts safe actions, blocks risky ones (recommended for team lead sessions)
   # "skip-permissions" — Claude runs with --dangerously-skip-permissions (use for trusted/local setups only)
   permissions_mode: normal
 
+  # Model for worker (team lead) sessions. Team lead uses this model,
+  # then delegates to sub-agents with lighter models (sonnet/haiku) via Agent tool.
+  # model: opus
+
   # Path to the claude CLI binary. Uses $PATH lookup by default.
+  # If claude is not in PATH (common with ~/.local/bin installs), set the absolute path:
+  # claude_bin: /home/your-user/.local/bin/claude
   claude_bin: claude
 
 dispatch:

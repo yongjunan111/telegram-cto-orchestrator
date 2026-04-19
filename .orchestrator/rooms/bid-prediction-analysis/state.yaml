@@ -1,0 +1,49 @@
+room:
+  id: bid-prediction-analysis
+  name: 입찰 예측 엔진 역분석
+  status: active
+  program_id: null
+  created_at: '2026-04-18T19:34:32Z'
+  updated_at: '2026-04-19T04:48:30Z'
+context:
+  goal: 3200만건 입찰 결과 데이터에서 낙찰 패턴을 역추적하여 현재 예측 엔진의 오차 원인을 규명하고, 경쟁업체 추천 로직을 데이터 기반으로
+    역추론한다
+  request_summary: 입찰나침반의 최적투찰 추천금액이 실제 낙찰금액 및 경쟁업체 추천금액과 차이가 큼. 현재 엔진은 C(15,4) 시나리오
+    균등 가중 기대점수 최적화 방식인데, 실제 게임은 경쟁자 대비 상대적 유리함이 핵심. 103만건 공고 + 3200만건 결과 + 21.8만건
+    복수예비가격 데이터로 역분석 필요.
+  current_summary: Discovery 완료. 5,030건 시뮬레이션으로 +1.88%p 구조적 상향 편향 확인. 밴드 적중률 0%. 코덱스
+    크로스체크 완료. 수정 계획 확정 단계.
+  open_questions: []
+  constraints:
+  - DB 접근은 docker exec bidcompass_db psql 로만
+  - bidcompass 코드는 /home/dydwn/bidcompass/ 에 위치
+  - 분석 결과는 수치 증거 기반, 추측 금지
+  - 경쟁업체 로직은 데이터 역추론만, 소스 접근 불가
+  acceptance_criteria: []
+  execution_cwd: /home/dydwn/bidcompass
+lifecycle:
+  current_phase: planning
+  next_action: ''
+  blocker_summary: ''
+  blocked_by: null
+discovery:
+  problem_statement: 엔진 추천 투찰율이 실제 낙찰율보다 +1.88%p 높고 밴드 적중률 0%. 목적함수가 기대점수 최대화인데 실제는
+    경쟁자 대비 상대 위치 게임.
+  confirmed_facts:
+  - '5030건 시뮬레이션: 추천 91.39% vs 실제 89.51% = +1.88%p'
+  - 97.4% 과대추천, 밴드 적중 0/5030
+  - '투찰자수별 낙찰율 수렴: 1~5명 93%, 6명+ 88~89%'
+  - 업체별 투찰 일관성 std 중위 1.80%p
+  - 기존 백테스트 477건, 1207건 결과 존재
+  - 기존 코드에 6개 경쟁 구간 정의 있음
+  assumptions: []
+  options_considered: []
+  decisions_made:
+  - '접근: 기대점수 밴드 내에서 경쟁 현실 반영한 보정 적용'
+  - '순서: 백테스트 지표 추가 → 피처 빌더 → 정책 테이블 → 엔진 반영'
+  - 타겟 투찰율 하드코딩 금지, holdout 기반 정책 테이블로
+  - 추첨 편향 반영은 보류 (avg 8.01 vs 기대 8.0, 효과 미미)
+  dependencies: []
+  implementation_unknowns: []
+  chosen_direction: ''
+  readiness_notes: ''

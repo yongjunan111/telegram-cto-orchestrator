@@ -1,0 +1,29 @@
+handoff:
+  id: bid-engine-integration
+  room_id: bid-prediction-analysis
+  program_id: null
+  from: orchestrator
+  to: analyst-1
+  status: open
+  priority: medium
+  kind: implementation
+task:
+  description: "엔진 통합: 보정 추천을 optimal_bid.py에 반영.\n\n1. find_optimal_bid 결과에 보정 추천\
+    \ 필드 추가:\n   - adjusted_bid: 정책 테이블 기반 보정된 추천금액\n   - adjusted_rate: 보정된 투찰율\n\
+    \   - competition_bracket: 적용된 경쟁 구간\n   - policy_version: 적용된 정책 테이블 버전\n\n2.\
+    \ 기존 recommended_bid는 유지 (기대점수 최대화 결과)\n   - 보정 추천은 별도 필드로 추가 (기존 로직 안 건드림)\n\n\
+    3. 밴드 계산을 엔진 결과로 이동:\n   - 현재 화면(view)에서 계산하는 부분 → OptimalBidResult로 내려줌\n   -\
+    \ 보정 밴드 = 정책 테이블의 P25~P75 기반\n\n4. 백테스트 파이프라인으로 효과 검증:\n   - 보정 전/후 오차 비교\n  \
+    \ - 보정 밴드 적중률 측정\n\n의존: bid-backtest-pipeline, bid-policy-table 완료 후 진행"
+  scope: g2b/services/optimal_bid.py + g2b/views.py 또는 g2b/ui_api.py
+  constraints: []
+  acceptance_criteria: []
+  report_back: ''
+  non_goals: []
+  invariants: []
+  failure_examples: []
+  validation: []
+timestamps:
+  created_at: '2026-04-19T01:38:58Z'
+  claimed_at: null
+  completed_at: null

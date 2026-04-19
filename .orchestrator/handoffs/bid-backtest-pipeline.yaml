@@ -1,0 +1,41 @@
+handoff:
+  id: bid-backtest-pipeline
+  room_id: bid-prediction-analysis
+  program_id: null
+  from: orchestrator
+  to: analyst-1
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: "백테스트 파이프라인 확장. 기존 simulate_historical.py / simulate_optimal_bid_db.py\
+    \ 결과(477건, 1207건) 위에 새 지표 추가:\n\n1. 기존 백테스트를 5,030건 기준으로 재실행 가능하게 표본 조건 고정\n \
+    \  - 조건: A값 있음 + 복수예비가격 15개 + 1순위 있음 + bid_rate 80~100%\n   \n2. 출력 지표 추가:\n \
+    \  - 추천 투찰율 vs 실제 1순위 투찰비율 (절대 오차)\n   - 밴드 적중 여부 (추천 band_low~band_high 안에 실제\
+    \ 낙찰율 포함 여부)\n   - 하한율 통과 여부\n   - 예측 투찰자 구간 vs 실제 구간 (Phase 2 이후 사용)\n   \n3.\
+    \ 결과를 JSON으로 저장, 구간별(별표/금액대/투찰자수) 요약 출력\n\n기존 코드: g2b/management/commands/simulate_optimal_bid_db.py,\
+    \ simulate_historical.py\n기존 결과: data/collected/에 저장된 기존 분석 결과 참조"
+  scope: g2b/management/commands/simulate_optimal_bid_db.py 확장 + 백테스트 지표 추가
+  constraints: []
+  acceptance_criteria: []
+  report_back: ''
+  non_goals: []
+  invariants: []
+  failure_examples: []
+  validation: []
+timestamps:
+  created_at: '2026-04-19T01:38:17Z'
+  claimed_at: '2026-04-19T04:32:50Z'
+  completed_at: '2026-04-19T04:32:50Z'
+resolution:
+  validation_coverage: []
+  acceptance_coverage:
+    task: []
+    room: []
+  completed_by: analyst-1
+  summary: simulate_optimal_bid_db.py 확장 완료. --strict-sample 플래그, 4개 새 지표(투찰율 오차/밴드
+    적중/하한율 통과/투찰자 버킷), 5개 JSON 집계 블록 추가. 16/16 테스트 통과.
+  files_changed: []
+  verification: []
+  risks:
+  - 밴드 적중 항상 0 (엔진 밴드 collapse 이슈)

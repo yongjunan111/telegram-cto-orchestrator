@@ -1,17 +1,8 @@
-# Peer Registry
-# Known worker sessions and their capabilities.
-# Static metadata only. The status field is informational, not enforced by orchctl.
-# Peer discovery and heartbeat are out of scope.
-
-peers: []
-
-# Example peer entry:
-# - id: "backend-worker"
-#   name: "Backend Worker"
-#   type: worker              # worker | reviewer | specialist
-#   cwd: "/path/to/backend-repo"
-#   capabilities:
-#     - python
-#     - fastapi
-#   status: available         # available | busy | offline (informational only)
-#   last_seen: "2026-04-01T00:00:00Z"
+peers:
+- id: analyst-1
+  name: 데이터 분석 워커
+  type: worker
+  cwd: /home/dydwn/bidcompass
+  capabilities: []
+  status: available
+  last_seen: null

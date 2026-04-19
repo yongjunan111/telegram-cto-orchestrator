@@ -1,0 +1,29 @@
+handoff:
+  id: bid-feature-builder
+  room_id: bid-prediction-analysis
+  program_id: null
+  from: orchestrator
+  to: analyst-1
+  status: open
+  priority: medium
+  kind: implementation
+task:
+  description: "투찰자 수 예측용 피처 빌더 구현.\n\n1. 학습용 데이터셋 생성 스크립트:\n   - 입력 피처: 공고 시점에 알\
+    \ 수 있는 값만 (추정가격 구간, 공종/업종, 지역제한, 입찰방식, 요일/시기)\n   - 정답: 실제 투찰자 수 (bidder_cnt from\
+    \ g2b_bidresult)\n   - 피처는 g2b_bidannouncement에서, 정답은 g2b_bidresult에서 가져옴\n\n\
+    2. 경쟁 구간: 기존 코드의 6개 구간 사용 (코드에서 확인하여 동일 적용)\n   - 50+ 하나로 뭉개지 말고, 50~99, 100~199,\
+    \ 200+ 구분 유지\n\n3. 구간별 중위값 룩업 테이블로 시작 (ML은 나중에)\n   - 추정가격 구간 × 경쟁 구간별 교차 테이블\n\
+    \n4. holdout 3개월로 예측 정확도 측정\n\n기존 분석: data/collected/cross_table_eda.json, bid_clustering_exploration.json\
+    \ 참조"
+  scope: g2b/services/ 또는 g2b/management/commands/ 에 피처 빌더 추가
+  constraints: []
+  acceptance_criteria: []
+  report_back: ''
+  non_goals: []
+  invariants: []
+  failure_examples: []
+  validation: []
+timestamps:
+  created_at: '2026-04-19T01:38:32Z'
+  claimed_at: null
+  completed_at: null
