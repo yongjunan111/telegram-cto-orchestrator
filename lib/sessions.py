@@ -4,7 +4,7 @@ import sys
 
 from . import storage
 from .validators import (
-    validate_slug, validate_tmux_target, require_session,
+    validate_slug, validate_tmux_target, validate_tmux_session, require_session,
     require_peer, require_room, require_handoff,
     VALID_SESSION_MODES, VALID_SESSION_STATUSES,
 )
@@ -109,6 +109,14 @@ def cmd_session_upsert(args):
     # structurally invalid value into runtime/sessions/<id>.yaml.
     if args.tmux_target is not None:
         validate_tmux_target(args.tmux_target, "tmux_target")
+
+    # CLI boundary check: tmux_session must match the safe name format BEFORE
+    # we collect updates. Without this an operator could persist a structurally
+    # unsafe tmux_session name (containing shell metacharacters, whitespace,
+    # etc) into authoritative state — downstream tmux subprocess usage would
+    # then be forced to tolerate it.
+    if args.tmux_session is not None:
+        validate_tmux_session(args.tmux_session, "tmux_session")
 
     # Validate reuse_count non-negative
     reuse_count = None

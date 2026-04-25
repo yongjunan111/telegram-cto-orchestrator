@@ -197,6 +197,23 @@ def cmd_handoff_dispatch(args):
     print(f"  tmux_target:   {result.get('tmux_target', '(none)')}")
     print(f"  cwd:           {cwd}")
     print(f"  artifact:      {result['artifact_path']}")
+
+    # Degraded launch surfacing: dispatch success != worker success.
+    launch_status = result.get("launch_status", "launched")
+    print(f"  launch_status: {launch_status}")
+    launch_parts = result.get("launch_parts") or {}
+    if launch_parts:
+        parts_str = " ".join(
+            f"{k}={launch_parts.get(k, '?')}"
+            for k in ("artifact", "hooks", "bootstrap", "worker")
+        )
+        print(f"  launch_parts:  {parts_str}")
+    launch_reasons = result.get("launch_reasons") or []
+    if launch_reasons:
+        print("  launch_reasons:")
+        for lr in launch_reasons:
+            print(f"    - {lr}")
+
     for r in reasons:
         print(f"  - {r}")
 
@@ -482,6 +499,13 @@ def _compute_dispatch_decision(
 # ---------------------------------------------------------------------------
 
 def _tmux_session_exists(name: str) -> bool:
+    # Narrow prefilter: values from session YAML reach here via the allocation
+    # path; if the on-disk name is structurally unsafe we refuse to spawn a
+    # tmux subprocess for it. Treating unsafe as "does not exist" flows into
+    # the existing dead-tmux branch of _evaluate_session_eligibility /
+    # _compute_dispatch_decision without a new code path.
+    if not _is_safe_tmux_name(name):
+        return False
     try:
         result = subprocess.run(
             ["tmux", "has-session", "-t", name],
@@ -568,15 +592,21 @@ def _tmux_kill_session(name: str) -> None:
         pass
 
 
-def _tmux_send_keys(name: str, keys: str) -> None:
-    """Best-effort send-keys. Ignore errors."""
+def _tmux_send_keys(name: str, keys: str) -> bool:
+    """Send keys to tmux pane/session.
+
+    Returns True if the send-keys subprocess returned 0, False otherwise.
+    Callers that need degraded-launch surfacing check the return value;
+    callers that want fire-and-forget behavior can ignore it.
+    """
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["tmux", "send-keys", "-t", name, keys, "Enter"],
             capture_output=True, timeout=5
         )
+        return result.returncode == 0
     except Exception:
-        pass
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -817,8 +847,13 @@ def _conservative_lease(now_iso: str) -> str:
 # Session hook helpers
 # ---------------------------------------------------------------------------
 
-def _install_session_hook_file() -> str:
-    """Install the session hook template to runtime dir if not present. Return absolute path."""
+def _install_session_hook_file() -> tuple:
+    """Install the session hook template to runtime dir.
+
+    Returns (abs_path, ok, reason). abs_path is always returned; ok is False
+    when the template could not be copied. Callers use the ok flag to decide
+    whether hook injection is viable.
+    """
     template_src = os.path.join(os.path.dirname(__file__), "session_hooks.sh.template")
     target_dir = os.path.join(storage.RUNTIME_DIR, "hooks")
     target_path = os.path.join(target_dir, "session_hooks.sh")
@@ -830,8 +865,9 @@ def _install_session_hook_file() -> str:
         storage.safe_write_text(target_dir, target_path, content)
     except Exception as e:
         print(f"Warning: session hook install failed: {e}", file=sys.stderr)
+        return os.path.abspath(target_path), False, f"hook install failed: {e}"
 
-    return os.path.abspath(target_path)
+    return os.path.abspath(target_path), True, ""
 
 
 def _get_orchctl_invocation() -> tuple:
@@ -843,17 +879,25 @@ def _get_orchctl_invocation() -> tuple:
     return venv_python, orchctl_script
 
 
-def _inject_session_hooks(tmux_target: str, session_id: str, handoff_id: str, room_id: str) -> None:
+def _inject_session_hooks(tmux_target: str, session_id: str, handoff_id: str, room_id: str) -> tuple:
     """Inject env vars + source hook file into the EXACT pane identified by
     tmux_target. Best effort, idempotent. Caller is responsible for passing a
     target captured/revalidated under the appropriate guard.
+
+    Returns (ok: bool, reason: str) for degraded-launch surfacing. ok is
+    False when any sub-step (target check, hook install, send-keys) fails.
+    Callers must not roll back tmux/session state on a False return — a
+    failed injection only affects worker observability, not dispatch state.
     """
     if not _is_safe_tmux_target(tmux_target):
-        return
+        return False, f"unsafe tmux_target '{tmux_target}'"
     if not _tmux_target_exists(tmux_target):
-        return
+        return False, f"tmux_target '{tmux_target}' not alive"
 
-    hook_path = _install_session_hook_file()
+    hook_path, install_ok, install_reason = _install_session_hook_file()
+    if not install_ok:
+        return False, install_reason
+
     venv_python, orchctl_script = _get_orchctl_invocation()
 
     # Send env var exports — use shlex.quote for safe shell quoting (Fix 4)
@@ -864,8 +908,114 @@ def _inject_session_hooks(tmux_target: str, session_id: str, handoff_id: str, ro
         f"ORCHCTL_PYTHON={shlex.quote(venv_python)} "
         f"ORCHCTL_SCRIPT={shlex.quote(orchctl_script)}"
     )
-    _tmux_send_keys(tmux_target, exports)
-    _tmux_send_keys(tmux_target, f"source {shlex.quote(hook_path)}")
+    if not _tmux_send_keys(tmux_target, exports):
+        return False, "tmux send-keys failed (env exports)"
+    if not _tmux_send_keys(tmux_target, f"source {shlex.quote(hook_path)}"):
+        return False, "tmux send-keys failed (source hook)"
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Degraded-launch surfacing
+# ---------------------------------------------------------------------------
+
+# Worker statuses that do NOT contribute to a degraded launch verdict.
+# skipped_disabled = operator disabled auto-launch (intentional)
+# skipped_existing = pane already has a worker (duplicate-avoidance is fine)
+# launched         = happy path
+_WORKER_STATUSES_OK = ("launched", "skipped_disabled", "skipped_existing")
+
+
+def _aggregate_launch_status(artifact_ok, artifact_reason,
+                             hooks_raw, bootstrap_path, worker_raw):
+    """Aggregate launch-step outcomes into (status, parts, reasons).
+
+    - artifact_ok: bool, artifact_reason: str (from caller's try/except).
+    - hooks_raw: (ok, reason) tuple from _inject_session_hooks. None is
+      tolerated for backward-compat with legacy mocks (treated as ok).
+    - bootstrap_path: str — non-empty means success, "" means failure.
+    - worker_raw: (status, reason) tuple from _launch_worker. None is
+      tolerated for backward-compat with legacy mocks (treated as launched).
+
+    Returns:
+      status: "launched" | "degraded" | "skipped"
+        - launched: all steps ok and worker actually started
+        - skipped:  all steps ok but worker intentionally not started
+                    (operator disabled auto-launch, or pane already has a
+                    worker — duplicate-avoidance)
+        - degraded: any step failed
+      parts:  dict of {artifact, hooks, bootstrap, worker} step summaries
+      reasons: list of human-readable failure explanations (empty unless degraded)
+    """
+    if isinstance(hooks_raw, tuple) and len(hooks_raw) >= 2:
+        hooks_ok, hooks_reason = bool(hooks_raw[0]), str(hooks_raw[1] or "")
+    else:
+        hooks_ok, hooks_reason = True, ""
+
+    bootstrap_ok = bool(bootstrap_path)
+    bootstrap_reason = "" if bootstrap_ok else "bootstrap generation failed"
+
+    if isinstance(worker_raw, tuple) and len(worker_raw) >= 2:
+        worker_status = str(worker_raw[0])
+        worker_reason = str(worker_raw[1] or "")
+    else:
+        worker_status, worker_reason = "launched", ""
+
+    parts = {
+        "artifact": "ok" if artifact_ok else "failed",
+        "hooks": "ok" if hooks_ok else "failed",
+        "bootstrap": "ok" if bootstrap_ok else "failed",
+        "worker": worker_status,
+    }
+
+    reasons = []
+    if not artifact_ok:
+        reasons.append(f"artifact: {artifact_reason or 'unknown failure'}")
+    if not hooks_ok:
+        reasons.append(f"hooks: {hooks_reason or 'unknown failure'}")
+    if not bootstrap_ok:
+        reasons.append(f"bootstrap: {bootstrap_reason}")
+    if worker_status not in _WORKER_STATUSES_OK:
+        reasons.append(f"worker: {worker_reason or worker_status}")
+
+    all_steps_ok = (
+        artifact_ok
+        and hooks_ok
+        and bootstrap_ok
+        and worker_status in _WORKER_STATUSES_OK
+    )
+    if not all_steps_ok:
+        return "degraded", parts, reasons
+    if worker_status == "launched":
+        return "launched", parts, reasons
+    # worker was intentionally skipped (skipped_disabled / skipped_existing)
+    return "skipped", parts, reasons
+
+
+def _update_last_launch_status(session_id: str, launch_status: str) -> None:
+    """Stamp the session YAML with last_launch_status and last_launch_at.
+
+    Only these two fields are persisted; detailed failure reasons stay in
+    dispatch stdout + the dispatch result dict, per the handoff constraint
+    that session YAML must not carry long failure payloads. Best-effort:
+    failure to write this stamp is logged but never fails dispatch.
+    """
+    try:
+        path = storage.session_path(session_id)
+        if not os.path.isfile(path):
+            return
+        state = storage.read_state(path)
+        if not isinstance(state, dict):
+            return
+        sess = state.get("session") or {}
+        if not isinstance(sess, dict):
+            return
+        sess["last_launch_status"] = launch_status
+        sess["last_launch_at"] = storage.now_iso()
+        state["session"] = sess
+        storage.write_state(path, state)
+    except Exception as e:
+        print(f"Warning: last_launch_status update failed: {e}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -940,6 +1090,8 @@ def _execute_fresh_dispatch(
         return {"ok": False, "error": f"session state write failed: {e}; tmux rolled back"}
 
     # Write dispatch artifact
+    artifact_ok = True
+    artifact_reason = ""
     try:
         artifact_path = _write_dispatch_artifact(
             handoff_state, room_state, session_id, tmux_name, target_peer, now,
@@ -949,13 +1101,24 @@ def _execute_fresh_dispatch(
         # Don't roll back state — artifact is derived, but warn
         print(f"Warning: artifact write failed: {e}", file=sys.stderr)
         artifact_path = "(failed)"
+        artifact_ok = False
+        artifact_reason = str(e) or "artifact write failed"
 
-    # Inject session hooks at the EXACT captured pane (best effort, idempotent)
-    _inject_session_hooks(tmux_target, session_id, handoff_id, handoff_room)
+    # Inject session hooks at the EXACT captured pane (best effort, idempotent).
+    # Return value drives degraded-launch surfacing; failure does NOT roll back
+    # the tmux/session state created above.
+    hooks_raw = _inject_session_hooks(tmux_target, session_id, handoff_id, handoff_room)
 
-    # Generate bootstrap and launch worker
+    # Generate bootstrap and launch worker. Empty bootstrap_path means the
+    # bootstrap subprocess failed; the launch step then reports
+    # skipped_no_bootstrap and overall launch is degraded.
     bootstrap_path = _run_bootstrap_and_display(tmux_target, session_id)
-    _launch_worker(tmux_target, session_id, bootstrap_path)
+    worker_raw = _launch_worker(tmux_target, session_id, bootstrap_path)
+
+    launch_status, launch_parts, launch_reasons = _aggregate_launch_status(
+        artifact_ok, artifact_reason, hooks_raw, bootstrap_path, worker_raw
+    )
+    _update_last_launch_status(session_id, launch_status)
 
     return {
         "ok": True,
@@ -963,6 +1126,9 @@ def _execute_fresh_dispatch(
         "tmux_session": tmux_name,
         "tmux_target": tmux_target,
         "artifact_path": artifact_path,
+        "launch_status": launch_status,
+        "launch_parts": launch_parts,
+        "launch_reasons": launch_reasons,
     }
 
 
@@ -1061,6 +1227,8 @@ def _execute_reuse_dispatch(
             return {"ok": False, "error": f"session state update failed: {e}"}
 
         # Write dispatch artifact
+        artifact_ok = True
+        artifact_reason = ""
         try:
             artifact_path = _write_dispatch_artifact(
                 handoff_state, room_state, session_id, tmux_name, target_peer, now,
@@ -1069,13 +1237,23 @@ def _execute_reuse_dispatch(
         except Exception as e:
             print(f"Warning: artifact write failed: {e}", file=sys.stderr)
             artifact_path = "(failed)"
+            artifact_ok = False
+            artifact_reason = str(e) or "artifact write failed"
 
         # Re-inject session hooks at the EXACT captured pane (idempotent).
-        _inject_session_hooks(tmux_target, session_id, handoff_id, handoff_room)
+        # Return value drives degraded-launch surfacing; failure does NOT roll
+        # back the session claim — the session is already marked busy.
+        hooks_raw = _inject_session_hooks(tmux_target, session_id, handoff_id, handoff_room)
 
-        # Generate bootstrap and launch worker.
+        # Generate bootstrap and launch worker. Empty bootstrap_path flows to
+        # skipped_no_bootstrap which aggregates to degraded launch status.
         bootstrap_path = _run_bootstrap_and_display(tmux_target, session_id)
-        _launch_worker(tmux_target, session_id, bootstrap_path)
+        worker_raw = _launch_worker(tmux_target, session_id, bootstrap_path)
+
+        launch_status, launch_parts, launch_reasons = _aggregate_launch_status(
+            artifact_ok, artifact_reason, hooks_raw, bootstrap_path, worker_raw
+        )
+        _update_last_launch_status(session_id, launch_status)
 
         return {
             "ok": True,
@@ -1083,6 +1261,9 @@ def _execute_reuse_dispatch(
             "tmux_session": tmux_name,
             "tmux_target": tmux_target,
             "artifact_path": artifact_path,
+            "launch_status": launch_status,
+            "launch_parts": launch_parts,
+            "launch_reasons": launch_reasons,
         }
     finally:
         _release_session_lock(lock_path)
@@ -1121,41 +1302,52 @@ def _get_worker_launch_script() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker_launch.py")
 
 
-def _launch_worker(tmux_target: str, session_id: str, bootstrap_path: str) -> None:
+def _launch_worker(tmux_target: str, session_id: str, bootstrap_path: str) -> tuple:
     """Launch a Claude worker in the EXACT pane identified by tmux_target.
 
-    Best-effort; failures do not abort dispatch. If a worker process is
-    already running in the pane, skip to avoid duplicate execution.
+    Returns (status, reason). Callers must NOT roll back tmux/session state
+    on any non-launched status — last_launch_status tracks the last attempt,
+    not live worker health.
+
+    status values:
+      - "launched"             — worker launch command sent successfully
+      - "skipped_disabled"     — config disabled auto-launch (operator choice)
+      - "skipped_existing"     — pane already has a worker process
+      - "skipped_no_bootstrap" — bootstrap artifact missing (degraded)
+      - "failed"               — unsafe target / dead pane / config error /
+                                 send-keys failure (degraded)
     """
     if not _is_safe_tmux_target(tmux_target):
-        return
+        return "failed", f"unsafe tmux_target '{tmux_target}'"
     if not _tmux_target_exists(tmux_target):
-        return
+        return "failed", f"tmux_target '{tmux_target}' not alive"
 
     # Check config: is auto-launch enabled?
     try:
         config = load_config()
     except ConfigError as e:
         print(f"Warning: config error, skipping worker launch: {e}", file=sys.stderr)
-        return
+        return "failed", f"config error: {e}"
     if not config.get("dispatch", {}).get("auto_launch_worker", True):
-        return
+        return "skipped_disabled", "auto_launch_worker disabled in config"
 
     if not bootstrap_path or not os.path.isfile(bootstrap_path):
         _tmux_send_keys(tmux_target, "echo 'Bootstrap artifact not available — worker not launched.'")
-        return
+        return "skipped_no_bootstrap", "bootstrap artifact not available"
 
     # Check if a worker process (claude) is already running in the pane
     if _pane_has_worker(tmux_target):
         print(f"Warning: pane {tmux_target} already has a worker process — skipping launch.", file=sys.stderr)
-        return
+        return "skipped_existing", "pane already has a worker process"
 
     launch_script = _get_worker_launch_script()
     venv_python, _ = _get_orchctl_invocation()
 
     # Single command sent to tmux — no multiline, no quoting issues
     cmd = f"{shlex.quote(venv_python)} {shlex.quote(launch_script)} {shlex.quote(bootstrap_path)}"
-    _tmux_send_keys(tmux_target, cmd)
+    if not _tmux_send_keys(tmux_target, cmd):
+        return "failed", "tmux send-keys failed for worker launch"
+    return "launched", ""
 
 
 def _pane_has_worker(tmux_target: str) -> bool:

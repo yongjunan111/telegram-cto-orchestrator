@@ -6,3 +6,52 @@ peers:
   capabilities: []
   status: available
   last_seen: null
+- id: fs-worker-1
+  name: Earth Canvas 따라잡기 워커 1
+  type: worker
+  cwd: /home/dydwn/projects/first_shovel
+  capabilities:
+  - fastapi
+  - sqlalchemy
+  - alembic
+  - postgresql
+  - postgis
+  - flutter
+  - oauth
+  - jwt
+  - gpx-parsing
+  - dtw
+  - pytest
+  status: available
+  last_seen: null
+- id: cto
+  name: CTO (세션)
+  type: reviewer
+  cwd: /home/dydwn/projects/telegram-cto-orchestrator
+  capabilities: []
+  status: available
+  last_seen: null
+- id: orch-worker-a-foundation
+  name: Orch Worker A Foundation
+  type: worker
+  cwd: /home/dydwn/projects/telegram-cto-orchestrator
+  capabilities: []
+  status: available
+- id: orch-worker-b-adr
+  name: Orch Worker B Adr
+  type: worker
+  cwd: /home/dydwn/projects/telegram-cto-orchestrator
+  capabilities: []
+  status: available
+- id: orch-worker-c-dispatch
+  name: Orch Worker C Dispatch
+  type: worker
+  cwd: /home/dydwn/projects/telegram-cto-orchestrator
+  capabilities: []
+  status: available
+- id: orch-worker-d-gc-audit
+  name: Orch Worker D Gc Audit
+  type: worker
+  cwd: /home/dydwn/projects/telegram-cto-orchestrator
+  capabilities: []
+  status: available

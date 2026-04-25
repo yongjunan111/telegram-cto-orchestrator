@@ -1,0 +1,33 @@
+handoff:
+  id: orch-dispatch-degraded-launch
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-c-dispatch
+  status: open
+  priority: high
+  kind: implementation
+task:
+  description: 'Dispatch degraded launch: surface bootstrap/hook/send/worker launch
+    failures without treating dispatch success as worker success.'
+  scope: 'Allowed files only: lib/dispatch.py for degraded launch surfacing, tests/test_dispatch_degraded_launch.py.'
+  constraints:
+  - 다른 세션도 같은 레포에서 작업 중입니다. unrelated dirty/untracked changes를 절대 되돌리지 마세요. 자기 allowed
+    files 밖은 수정하지 마세요.
+  - Session YAML may only store last_launch_status and last_launch_at; detailed failure
+    reasons go to output/artifact/report, not long YAML.
+  acceptance_criteria: []
+  report_back: ''
+  non_goals:
+  - Do not edit checkpoint, sessions, validators, ADR docs, gc-audit, pyproject, or
+    .gitignore.
+  invariants:
+  - Worker launch failure must not roll back already-created tmux/session state; last_launch_status
+    means last attempt, not live worker health.
+  failure_examples: []
+  validation:
+  - Run targeted dispatch degraded launch tests and report exact command output.
+timestamps:
+  created_at: '2026-04-24T11:31:35Z'
+  claimed_at: null
+  completed_at: null

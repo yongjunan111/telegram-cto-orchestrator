@@ -4,7 +4,7 @@ import re
 import sys
 
 from . import storage
-from .validators import require_session
+from .validators import require_session, is_slug_safe
 from .handoffs import _get_handoff_kind, _derive_review_state
 
 
@@ -25,6 +25,35 @@ def _validate_event(event: str) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+def _resolve_session_ref(raw_value, label, session_id, is_shell_exit):
+    """Validate a session-state ref (room_id / handoff_id) for filesystem use.
+
+    Empty / missing refs are benign (no lookup). Unsafe refs diverge by path:
+    - is_shell_exit=True: warn to stderr, return None so the caller skips the
+      downstream state lookup. The shell-exit trap tolerates this and still
+      writes exactly one marker.
+    - is_shell_exit=False (manual checkpoint): fail-closed via sys.exit(1).
+      No marker is written. Callers on the manual path must see corruption.
+    """
+    if not raw_value:
+        return None
+    if is_slug_safe(raw_value):
+        return raw_value
+    if is_shell_exit:
+        print(
+            f"Warning: session '{session_id}' has unsafe {label} ref "
+            f"{raw_value!r}; skipping {label.split('_', 1)[0]} state lookup.",
+            file=sys.stderr,
+        )
+        return None
+    print(
+        f"Error: session '{session_id}' has unsafe {label} ref "
+        f"{raw_value!r}; refusing to construct filesystem path.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def cmd_session_checkpoint(args):
@@ -53,8 +82,25 @@ def cmd_session_checkpoint(args):
         sys.exit(1)
 
     s = session_state.get("session", {})
-    room_id = s.get("room_id")
-    handoff_id = s.get("handoff_id")
+    raw_room_id = s.get("room_id")
+    raw_handoff_id = s.get("handoff_id")
+
+    # Validate slug-safety BEFORE the refs reach storage.room_state_path() /
+    # storage.handoff_path(). A corrupt or tampered session YAML could otherwise
+    # smuggle `../` sequences or shell-hostile bytes into a filesystem path that
+    # `read_state` then opens. Two paths diverge on unsafe refs:
+    #   - shell-exit hook: the outer trap hides stderr and tolerates our exit
+    #     code, so we warn-and-skip to keep producing exactly one marker.
+    #   - manual checkpoint: caller is a human/CI on stdout; surface the error
+    #     and fail-closed (sys.exit(1), no marker) so corruption is not masked.
+    is_shell_exit = (event == "shell-exit")
+
+    room_id = _resolve_session_ref(
+        raw_room_id, "room_id", session_id, is_shell_exit
+    )
+    handoff_id = _resolve_session_ref(
+        raw_handoff_id, "handoff_id", session_id, is_shell_exit
+    )
 
     # Load room state if available
     room_state = None
@@ -190,10 +236,16 @@ def _render_checkpoint(session_id, event, note, s, room_state, handoff_state, no
         lines.append(f"- **ID:** {_fmt(s.get('room_id'))}")
         lines.append("- (room state not available)")
 
-    # Dispatch artifact pointer
+    # Dispatch artifact pointer. Use the validated handoff id from the handoff
+    # state we loaded (if any) — that value has already been through slug
+    # validation via the handoff_path lookup. Falling back to the raw
+    # s["handoff_id"] here would re-introduce the same path-construction risk
+    # the earlier validation exists to close.
     dispatches_dir = os.path.join(storage.RUNTIME_DIR, "dispatches")
-    handoff_id_val = s.get("handoff_id")
-    if handoff_id_val:
+    handoff_id_val = None
+    if handoff_state:
+        handoff_id_val = (handoff_state.get("handoff") or {}).get("id")
+    if handoff_id_val and is_slug_safe(handoff_id_val):
         dispatch_path = os.path.join(dispatches_dir, f"{handoff_id_val}.md")
         lines.append("")
         lines.append("## Dispatch Artifact")

@@ -12,6 +12,10 @@ _SLUG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$')
 # Mirrors lib/dispatch.py's _TMUX_TARGET_RE — both must stay in sync.
 _TMUX_TARGET_RE = re.compile(r'^%[0-9]+$')
 
+# tmux session name: letters, digits, underscore, hyphen. Must be non-empty.
+# Mirrors lib/dispatch.py's _TMUX_NAME_RE — both must stay in sync.
+_TMUX_NAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+
 
 def is_slug_safe(value: str) -> bool:
     """Return True if value matches the slug pattern, False otherwise."""
@@ -42,6 +46,28 @@ def validate_tmux_target(value: str, label: str) -> None:
             f"Error: {label} '{value}' is invalid. "
             f"Use the tmux pane id format '%N' where N is one or more digits "
             f"(e.g. '%12').",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def is_tmux_name_safe(value: str) -> bool:
+    """Return True if value is a safe tmux session name, False otherwise."""
+    return bool(value) and bool(_TMUX_NAME_RE.match(value))
+
+
+def validate_tmux_session(value: str, label: str) -> None:
+    """Exit with error if value is not a safe tmux session name.
+
+    A safe tmux session name contains only letters, digits, underscore, and
+    hyphen. Anything with shell metacharacters, whitespace, or empty values is
+    rejected at the CLI boundary so authoritative session state never holds a
+    structurally unsafe tmux_session that later feeds tmux subprocess calls.
+    """
+    if not value or not _TMUX_NAME_RE.match(value):
+        print(
+            f"Error: {label} '{value}' is invalid. "
+            f"Use letters, digits, underscore, and hyphen only (non-empty).",
             file=sys.stderr,
         )
         sys.exit(1)

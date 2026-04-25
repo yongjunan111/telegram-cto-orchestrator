@@ -1,0 +1,38 @@
+handoff:
+  id: orch-dispatch-degraded-launch-rework-1
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-c-dispatch
+  status: open
+  priority: high
+  kind: implementation
+task:
+  description: 'Rework orch-dispatch-degraded-launch (P2 from Codex review): change
+    last_launch_status enum from ok/degraded to the contracted launched/degraded/skipped.
+    YAML-persisted value must be one of these three.'
+  scope: 'Allowed files only: lib/dispatch.py, tests/test_dispatch_degraded_launch.py.
+    Other sessions active — do not revert unrelated dirty/untracked changes.'
+  constraints:
+  - 'Parent handoff: orch-dispatch-degraded-launch (no rework_of lineage because parent
+    never reached completed; this is operational follow-up).'
+  - Contracted enum is launched / degraded / skipped. Successful full launch → launched.
+    Any step failure → degraded. Operator-disabled auto-launch or pane already has
+    worker → skipped.
+  - Existing internal _WORKER_STATUSES_OK logic is fine, but the persisted YAML value
+    (last_launch_status) and dispatch stdout value must use the new enum.
+  acceptance_criteria: []
+  report_back: ''
+  non_goals:
+  - Do not touch checkpoints, sessions, validators, gc_audit, docs, pyproject, .gitignore.
+  invariants:
+  - YAML field last_launch_status ∈ {launched, degraded, skipped}. last_launch_at
+    still append-only. No rollback of tmux/session state on worker launch failure.
+  failure_examples: []
+  validation:
+  - Run tests/test_dispatch_degraded_launch.py targeted, then uv run pytest tests/
+    -q.
+timestamps:
+  created_at: '2026-04-24T16:19:30Z'
+  claimed_at: null
+  completed_at: null

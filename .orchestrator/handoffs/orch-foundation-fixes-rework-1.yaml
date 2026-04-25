@@ -1,0 +1,39 @@
+handoff:
+  id: orch-foundation-fixes-rework-1
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-a-foundation
+  status: open
+  priority: high
+  kind: implementation
+task:
+  description: 'Rework orch-foundation-fixes (P3 from Codex review): split manual
+    orchctl session checkpoint (fail-closed on unsafe room_id/handoff_id) from shell-exit
+    hook path (warn + marker, continue). Keep shell-exit behavior intact; only manual
+    path changes to fail-closed.'
+  scope: 'Allowed files only: lib/checkpoints.py, lib/validators.py (if needed for
+    new helper), tests/test_checkpoint_ref_validation.py. No other files. Other sessions
+    active — do not revert unrelated dirty/untracked changes.'
+  constraints:
+  - 'Parent handoff: orch-foundation-fixes (no rework_of lineage because parent never
+    reached completed; this is operational follow-up, not formal rework).'
+  - 'Manual checkpoint command path: invalid internal ref → sys.exit(1) with stderr
+    error. No marker file on manual path.'
+  - 'Shell-exit hook path: current warn + marker behavior preserved exactly.'
+  acceptance_criteria: []
+  report_back: ''
+  non_goals:
+  - Do not touch tmux_session validator, sessions.py, dispatch.py, pyproject.toml,
+    .gitignore.
+  invariants:
+  - Manual fail-closed must be covered by a new test; shell-exit warn+continue path
+    still covered.
+  failure_examples: []
+  validation:
+  - Run tests/test_checkpoint_ref_validation.py targeted, then uv run pytest tests/
+    -q. Report both outputs.
+timestamps:
+  created_at: '2026-04-24T16:19:23Z'
+  claimed_at: null
+  completed_at: null
