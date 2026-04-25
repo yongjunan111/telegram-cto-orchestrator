@@ -11,7 +11,7 @@ from lib.handoffs import (
     cmd_handoff_claim, cmd_handoff_block, cmd_handoff_complete,
     cmd_handoff_brief, cmd_handoff_room_memory, cmd_handoff_review,
     cmd_handoff_approve, cmd_handoff_request_changes,
-    cmd_handoff_rework,
+    cmd_handoff_rework, cmd_handoff_add_subtask,
 )
 from lib.log import cmd_log_append
 from lib.sessions import cmd_session_list, cmd_session_show, cmd_session_upsert
@@ -174,6 +174,12 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Task acceptance criterion (repeatable)")
     hcreate_p.add_argument("--kind", default="implementation", choices=["implementation", "discovery"],
                            help="Handoff kind (default: implementation)")
+    hcreate_p.add_argument("--execution-mode", default="delegate_optional",
+                           choices=["direct", "delegate_optional", "delegate_required"],
+                           dest="execution_mode",
+                           help="Execution mode (default: delegate_optional). "
+                                "'delegate_required' enables a hard completion gate that "
+                                "requires at least one completed child sub-handoff.")
     hcreate_p.set_defaults(func=cmd_handoff_create)
 
     # handoff list
@@ -255,6 +261,28 @@ def build_parser() -> argparse.ArgumentParser:
     hrework_p.add_argument("--by", required=True, help="Peer requesting the rework")
     hrework_p.add_argument("--to", default=None, help="Assignee for rework (defaults to original assignee)")
     hrework_p.set_defaults(func=cmd_handoff_rework)
+
+    # handoff add-subtask
+    haddsub_p = handoff_sub.add_parser(
+        "add-subtask",
+        help="Append a child sub-handoff entry to a parent's execution.child_handoffs",
+    )
+    haddsub_p.add_argument("handoff_id", metavar="<parent-handoff-id>")
+    haddsub_p.add_argument("--id", required=True, dest="id",
+                           help="Slug-safe id for the sub-handoff entry")
+    haddsub_p.add_argument("--model-target", required=True, dest="model_target",
+                           help="Model used for the sub-task (e.g. sonnet, haiku, opus, other)")
+    haddsub_p.add_argument("--owned-file", action="append", default=None, dest="owned_files",
+                           help="File exclusively owned by this sub-task (repeatable; "
+                                ">=1 required for status=completed)")
+    haddsub_p.add_argument("--status", required=True,
+                           choices=["completed", "failed", "escalated"],
+                           help="Sub-task outcome status")
+    haddsub_p.add_argument("--evidence", required=True,
+                           help="Concrete evidence text (non-empty for status=completed)")
+    haddsub_p.add_argument("--parent-criterion", default=None, dest="parent_criterion",
+                           help="Optional parent acceptance criterion this sub-task covers")
+    haddsub_p.set_defaults(func=cmd_handoff_add_subtask)
 
     # handoff dispatch-plan
     hdispatch_p = handoff_sub.add_parser("dispatch-plan", help="Derived dispatch allocation recommendation")

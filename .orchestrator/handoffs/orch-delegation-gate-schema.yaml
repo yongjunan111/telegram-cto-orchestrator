@@ -1,0 +1,240 @@
+handoff:
+  id: orch-delegation-gate-schema
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-a-foundation
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'Add execution.mode schema to handoff YAML and a hard completion gate
+    for delegate_required handoffs. Three-value enum: direct | delegate_optional |
+    delegate_required. Add ''orchctl handoff add-subtask'' CLI to record child sub-handoffs
+    (id, model_target, owned_files, status, evidence) onto parent''s execution.child_handoffs.
+    Modify ''handoff complete'' to fail-closed when execution.mode == delegate_required
+    and parent state lacks at least one completed child_handoff with owned_files (≥1)
+    and non-empty evidence. Update _render_brief to surface execution.mode and child_handoffs
+    in the brief output. Backward compat: legacy handoffs without execution block
+    behave as delegate_optional (no gate). Default for new handoffs without --execution-mode
+    flag: delegate_optional.'
+  scope: 'Allowed files ONLY: lib/handoffs.py, orchctl (parser wiring), tests/test_delegation_gate.py
+    (NEW). Do NOT touch lib/bootstrap.py, docs/, lib/idle_snapshot.py, lib/gc_audit.py,
+    lib/dispatch.py, lib/sessions.py, lib/checkpoints.py, lib/validators.py, .orchestrator/
+    data, pyproject.toml. Other sessions are active in this repo — do NOT revert unrelated
+    dirty/untracked files (paper-radar / idle-snapshot worker D output / etc.).'
+  constraints:
+  - 'LOCKED CONTRACT (consumed verbatim by handoff B and Codex review): handoff YAML
+    adds top-level ''execution'' block. Fields: execution.mode (string enum: direct|delegate_optional|delegate_required),
+    execution.child_handoffs (list, may be empty/absent unless mode=delegate_required
+    at completion). Each child_handoff entry fields: id (slug-safe string), model_target
+    (string, e.g. sonnet|haiku|opus|other), owned_files (list[str], ≥1 entry on completed
+    status), status (enum: completed|failed|escalated), evidence (string, non-empty
+    when status=completed), parent_criterion (string, optional).'
+  - 'CLI surface: ''handoff create ... --execution-mode {direct,delegate_optional,delegate_required}''
+    (default delegate_optional if flag absent). ''handoff add-subtask <parent-id>
+    --id <sub-id> --model-target <model> --owned-file <path> [--owned-file <path>...]
+    --status {completed,failed,escalated} --evidence "<text>" [--parent-criterion
+    "<text>"]''. add-subtask appends to execution.child_handoffs in parent YAML using
+    safe write semantics (atomic rename, no symlink follow), validates --id is slug-safe,
+    validates parent exists, validates parent is not yet completed/approved/blocked.'
+  - 'Completion gate: when execution.mode == delegate_required, ''handoff complete''
+    must verify (a) execution.child_handoffs has ≥1 entry with status=completed, (b)
+    each completed child has owned_files (≥1) and non-empty evidence; if any condition
+    fails, exit non-zero with clear error message identifying missing field(s) and
+    DO NOT mutate any state. When execution.mode in (direct, delegate_optional, absent/legacy),
+    gate is bypassed (existing behavior preserved).'
+  - '_render_brief: include ''Execution mode: <value>'' line and, if mode=delegate_required
+    and child_handoffs non-empty, render a ''Subtask ledger'' section listing id,
+    model_target, status, owned_files count. Do not include any wording that overlaps
+    with handoff B''s bootstrap protocol — that''s B''s scope.'
+  - 'Backward compatibility: all existing tests must remain green. Legacy handoffs
+    without execution block must complete normally. Default execution.mode for newly
+    created handoffs without explicit flag must be delegate_optional (loose, current
+    behavior).'
+  acceptance_criteria:
+  - execution.mode field round-trips through YAML save/load with all three enum values
+    plus absent (legacy) case.
+  - '''handoff create --execution-mode delegate_required <id> ...'' produces YAML
+    with execution.mode=delegate_required. Default (no flag) produces execution.mode=delegate_optional.'
+  - '''handoff add-subtask <parent> ...'' appends a well-formed entry to execution.child_handoffs
+    and persists atomically. Reject unsafe --id (path traversal, non-slug).'
+  - 'delegate_required handoff with NO child_handoffs entries: ''handoff complete''
+    exits non-zero with message naming the missing requirement; handoff state file
+    unchanged.'
+  - 'delegate_required handoff with 1 completed child (owned_files=[''lib/x.py''],
+    evidence=''ok''): ''handoff complete'' succeeds.'
+  - 'Legacy handoff (no execution block): ''handoff complete'' succeeds as before.'
+  - 'direct handoff: ''handoff complete'' succeeds without any child_handoffs.'
+  - _render_brief output contains 'Execution mode:' line for handoffs with execution
+    block; for delegate_required + ≥1 child, also contains a 'Subtask ledger' section.
+  - 'Full suite green: ''uv run pytest tests/ -q'' (count must increase by ≥6 new
+    tests in test_delegation_gate.py and existing count must not decrease).'
+  report_back: 'Post in CTO Telegram thread when complete: (a) test count delta (before/after),
+    (b) cleanup of demo test handoff confirmed, (c) any deviations from locked contract
+    with rationale, (d) hand off the locked contract spec to handoff B (paste the
+    exact YAML field set used) so handoff B''s renderer matches.'
+  non_goals:
+  - Bootstrap session-level rendering for delegate_required (handoff B owns lib/bootstrap.py).
+  - Documentation updates to docs/sub-handoff-format.md or docs/issue-team-lead-delegation-not-enforced.md
+    (handoff B).
+  - Auto-launching Sonnet/Haiku Agent tool from this gate (V2 work, deferred).
+  - Team lead peer type / can_edit_files permission model (V2, deferred).
+  - Modifying idle_snapshot.py, gc_audit.py, dispatch.py, or any other lib/* file
+    outside handoffs.py.
+  - Reviewing or completing the orch-room-idle-snapshot-v1 handoff (separate CTO review
+    track).
+  - Cleaning up the 8 stale open handoffs in this room (separate follow-up).
+  - Statusline / Node IPv6 / paper-radar fixes (separate).
+  invariants:
+  - No mutation of handoffs not under direct CLI command. add-subtask only appends
+    to execution.child_handoffs of the named parent, never touches other YAML.
+  - Parent handoff YAML byte hash before/after add-subtask differs only in execution.child_handoffs
+    append (test enforced).
+  - Failed completion (gate violation) leaves handoff state file unchanged (read-only
+    failure mode, no partial writes).
+  - No cross-file edits outside the allowed scope. No edits to lib/bootstrap.py (handoff
+    B owns that).
+  failure_examples:
+  - execution.mode value 'delegate_required' but the gate is silent — handoff completes
+    without any child evidence.
+  - add-subtask permits --id with '../' or other path-traversal.
+  - Editing lib/bootstrap.py from this handoff (scope violation).
+  - Failed gate writes partial state to handoff YAML before exit.
+  - Existing legacy handoff (no execution block) breaks at completion because the
+    new code dereferences execution.mode without None-check.
+  validation:
+  - 'Run targeted: uv run pytest tests/test_delegation_gate.py -v'
+  - 'Run full suite: uv run pytest tests/ -q (verify no regressions, count >= prior_count
+    + 6)'
+  - 'Manual: ./orchctl handoff create test-delegate --room orchestrator-hardening-gc-v1
+    --to orch-worker-a-foundation --task ''demo'' --execution-mode delegate_required
+    && ./orchctl handoff complete test-delegate --by orch-worker-a-foundation --summary
+    ''demo'' (must fail with clear error). Then: ./orchctl handoff add-subtask test-delegate
+    --id test-delegate-sub-1 --model-target sonnet --owned-file lib/x.py --status
+    completed --evidence ''ok'' && ./orchctl handoff complete test-delegate --by ...
+    (must succeed). Clean up the test handoff afterward.'
+timestamps:
+  created_at: '2026-04-25T07:53:46Z'
+  claimed_at: '2026-04-25T08:02:32Z'
+  completed_at: '2026-04-25T08:03:02Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: 'Run targeted: uv run pytest tests/test_delegation_gate.py -v'
+    evidence: tests/test_delegation_gate.py -v -> 18 passed in 0.22s (all new tests
+      for round-trip, create flag, add-subtask, gate, brief)
+  - validation_index: 2
+    validation_text: 'Run full suite: uv run pytest tests/ -q (verify no regressions,
+      count >= prior_count + 6)'
+    evidence: tests/ -q -> 230 passed (baseline 212 + 18 new = 230, no regressions;
+      ≥+6 new tests requirement satisfied)
+  - validation_index: 3
+    validation_text: 'Manual: ./orchctl handoff create test-delegate --room orchestrator-hardening-gc-v1
+      --to orch-worker-a-foundation --task ''demo'' --execution-mode delegate_required
+      && ./orchctl handoff complete test-delegate --by orch-worker-a-foundation --summary
+      ''demo'' (must fail with clear error). Then: ./orchctl handoff add-subtask test-delegate
+      --id test-delegate-sub-1 --model-target sonnet --owned-file lib/x.py --status
+      completed --evidence ''ok'' && ./orchctl handoff complete test-delegate --by
+      ... (must succeed). Clean up the test handoff afterward.'
+    evidence: 'Manual: ./orchctl handoff create test-delegate --execution-mode delegate_required
+      ... + claim + complete -> exit=1 with ''no completed child_handoffs are recorded''
+      message. Then add-subtask test-delegate --id test-delegate-sub-1 --model-target
+      sonnet --owned-file lib/x.py --status completed --evidence ''ok'' + complete
+      -> exit=0. Test handoff YAML deleted afterward.'
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: execution.mode field round-trips through YAML save/load with
+        all three enum values plus absent (legacy) case.
+      evidence: test_execution_mode_roundtrips_for_all_enum_values_plus_legacy PASSED
+        — saves+loads direct/delegate_optional/delegate_required and verifies legacy
+        handoff (no execution block) returns None via _get_execution_mode
+    - criterion_index: 2
+      criterion_text: '''handoff create --execution-mode delegate_required <id> ...''
+        produces YAML with execution.mode=delegate_required. Default (no flag) produces
+        execution.mode=delegate_optional.'
+      evidence: test_create_with_delegate_required_persists + test_create_default_is_delegate_optional
+        PASSED — explicit flag yields delegate_required in YAML, omitted flag defaults
+        to delegate_optional
+    - criterion_index: 3
+      criterion_text: '''handoff add-subtask <parent> ...'' appends a well-formed
+        entry to execution.child_handoffs and persists atomically. Reject unsafe --id
+        (path traversal, non-slug).'
+      evidence: test_add_subtask_appends_well_formed_entry + test_add_subtask_rejects_unsafe_id
+        + test_add_subtask_byte_invariant_only_appends_to_children PASSED — append
+        produces full entry (id, model_target, owned_files, status, evidence, parent_criterion);
+        unsafe ids ('../escape', spaces, upper, traversal, empty) rejected with sys.exit
+        and parent untouched; byte-hash of state minus child_handoffs unchanged before/after
+        append
+    - criterion_index: 4
+      criterion_text: 'delegate_required handoff with NO child_handoffs entries: ''handoff
+        complete'' exits non-zero with message naming the missing requirement; handoff
+        state file unchanged.'
+      evidence: test_complete_delegate_required_no_children_fails_closed PASSED +
+        manual confirmed exit=1 with message 'no completed child_handoffs are recorded';
+        pre/post bytes of handoff YAML byte-identical, status remains 'claimed'
+    - criterion_index: 5
+      criterion_text: 'delegate_required handoff with 1 completed child (owned_files=[''lib/x.py''],
+        evidence=''ok''): ''handoff complete'' succeeds.'
+      evidence: test_complete_delegate_required_with_one_completed_child_succeeds
+        PASSED + manual confirmed exit=0 with owned_files=['lib/x.py'] evidence='ok'
+    - criterion_index: 6
+      criterion_text: 'Legacy handoff (no execution block): ''handoff complete'' succeeds
+        as before.'
+      evidence: test_complete_legacy_handoff_no_execution_block_succeeds PASSED —
+        handoff yaml without execution block transitions claimed->completed normally;
+        gate None-checks via _get_execution_mode
+    - criterion_index: 7
+      criterion_text: 'direct handoff: ''handoff complete'' succeeds without any child_handoffs.'
+      evidence: test_complete_direct_mode_no_children_succeeds PASSED — direct mode
+        bypasses gate; complete succeeds with empty child_handoffs
+    - criterion_index: 8
+      criterion_text: _render_brief output contains 'Execution mode:' line for handoffs
+        with execution block; for delegate_required + ≥1 child, also contains a 'Subtask
+        ledger' section.
+      evidence: test_brief_renders_execution_mode_line_when_block_present + test_brief_renders_subtask_ledger_only_for_delegate_required_with_children
+        + test_brief_legacy_handoff_omits_execution_mode_line PASSED — 'Execution
+        mode:' line appears iff execution block exists; 'Subtask Ledger' section appears
+        iff mode=delegate_required AND children non-empty (verified suppressed for
+        delegate_required+0, delegate_optional+1; rendered for delegate_required+1
+        with id/model/status visible)
+    - criterion_index: 9
+      criterion_text: 'Full suite green: ''uv run pytest tests/ -q'' (count must increase
+        by ≥6 new tests in test_delegation_gate.py and existing count must not decrease).'
+      evidence: Full suite uv run pytest tests/ -q -> 230 passed; baseline before
+        this handoff was 212 (verified via 'pytest --co' before changes); +18 new
+        tests in tests/test_delegation_gate.py, well above the ≥+6 floor; no existing
+        test count decreased
+    room: []
+  completed_by: orch-worker-a-foundation
+  summary: Added execution.mode schema (direct|delegate_optional|delegate_required)
+    + execution.child_handoffs to handoff YAML; added 'orchctl handoff add-subtask'
+    CLI; added hard fail-closed gate in 'handoff complete' for delegate_required;
+    updated _render_brief with 'Execution mode:' line + 'Subtask Ledger' section.
+    Backward compat preserved (legacy handoffs bypass gate). 18 new tests in tests/test_delegation_gate.py,
+    full suite 212->230 passing.
+  files_changed:
+  - lib/handoffs.py
+  - orchctl
+  - tests/test_delegation_gate.py
+  verification:
+  - uv run pytest tests/test_delegation_gate.py -v -> 18 passed in 0.22s
+  - uv run pytest tests/ -q -> 230 passed in 1.08s (baseline 212, +18)
+  - 'Manual gate: create test-delegate --execution-mode delegate_required + claim
+    + complete -> exit=1 with clear error ''no completed child_handoffs are recorded''.
+    Then add-subtask --id test-delegate-sub-1 --owned-file lib/x.py --status completed
+    --evidence ''ok'' + complete -> exit=0. Demo handoff cleaned up.'
+  - 'Manual brief: ./orchctl handoff brief test-delegate showed ''- **Execution mode:**
+    delegate_required'' line in Assignment plus ''## Subtask Ledger'' section with
+    the recorded child entry.'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-25T08:08:56Z'
+  note: Approved. Gate is fail-closed (sys.exit before state mutation, lines 64/89),
+    is_slug_safe applied to add-subtask --id (line 1667), legacy/direct/delegate_optional
+    bypass via early-return on mode != delegate_required. 18 new tests cover all 9
+    acceptance criteria; full suite 212→230 passing. Manual smoke confirmed. Backward
+    compat preserved.

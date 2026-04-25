@@ -6,9 +6,87 @@ from . import storage
 from .validators import validate_slug, require_room, require_handoff, require_peer, is_slug_safe
 
 
+VALID_EXECUTION_MODES = ("direct", "delegate_optional", "delegate_required")
+
+
 def _get_handoff_kind(handoff_state: dict) -> str:
     """Read handoff.kind with implementation fallback for legacy handoffs."""
     return handoff_state.get("handoff", {}).get("kind") or "implementation"
+
+
+def _get_execution_mode(handoff_state: dict):
+    """Return execution.mode for a handoff, or None if absent (legacy)."""
+    execution = handoff_state.get("execution")
+    if not isinstance(execution, dict):
+        return None
+    return execution.get("mode")
+
+
+def _get_child_handoffs(handoff_state: dict) -> list:
+    """Return execution.child_handoffs list, or empty list if absent."""
+    execution = handoff_state.get("execution")
+    if not isinstance(execution, dict):
+        return []
+    children = execution.get("child_handoffs")
+    if not isinstance(children, list):
+        return []
+    return children
+
+
+def _check_delegation_gate(state: dict, handoff_id: str) -> None:
+    """Hard completion gate for delegate_required handoffs.
+
+    When execution.mode == 'delegate_required', verify:
+      (a) execution.child_handoffs has >=1 entry with status='completed'
+      (b) each completed child has owned_files (>=1) and non-empty evidence
+
+    Exits non-zero with a clear error on violation. Performs NO state writes
+    on failure. For execution.mode in ('direct', 'delegate_optional', None)
+    the gate is bypassed (legacy/loose behavior preserved).
+    """
+    mode = _get_execution_mode(state)
+    if mode != "delegate_required":
+        return
+
+    children = _get_child_handoffs(state)
+    completed_children = [
+        c for c in children if isinstance(c, dict) and c.get("status") == "completed"
+    ]
+
+    if not completed_children:
+        print(
+            f"Error: Cannot complete handoff '{handoff_id}' — execution.mode is "
+            f"'delegate_required' but no completed child_handoffs are recorded. "
+            f"Use 'handoff add-subtask' to record at least one completed sub-task "
+            f"before completing the parent.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    invalid = []
+    for c in completed_children:
+        cid = c.get("id") or "(unknown)"
+        owned = c.get("owned_files") or []
+        if not isinstance(owned, list):
+            owned = []
+        evidence_raw = c.get("evidence")
+        evidence = (evidence_raw or "").strip() if isinstance(evidence_raw, str) else ""
+        if not owned:
+            invalid.append((cid, "owned_files (>=1 entry required)"))
+            continue
+        if not evidence:
+            invalid.append((cid, "evidence (non-empty text required)"))
+
+    if invalid:
+        print(
+            f"Error: Cannot complete handoff '{handoff_id}' — execution.mode is "
+            f"'delegate_required' but the following completed child_handoffs are "
+            f"missing required fields:",
+            file=sys.stderr,
+        )
+        for cid, missing in invalid:
+            print(f"  - child '{cid}': missing {missing}", file=sys.stderr)
+        sys.exit(1)
 
 
 def scan_room_handoffs(room_id: str):
@@ -60,6 +138,14 @@ def cmd_handoff_create(args):
     priority = args.priority
     scope = args.scope or ""
     report_back = args.report_back or ""
+    execution_mode = getattr(args, "execution_mode", None) or "delegate_optional"
+    if execution_mode not in VALID_EXECUTION_MODES:
+        print(
+            f"Error: --execution-mode '{execution_mode}' is invalid. "
+            f"Valid values: {', '.join(VALID_EXECUTION_MODES)}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     validate_slug(handoff_id, "handoff_id")
     require_room(room_id)
@@ -94,6 +180,10 @@ def cmd_handoff_create(args):
             "invariants": args.invariants or [],
             "failure_examples": args.failure_examples or [],
             "validation": args.validation or [],
+        },
+        "execution": {
+            "mode": execution_mode,
+            "child_handoffs": [],
         },
         "timestamps": {
             "created_at": now,
@@ -275,7 +365,30 @@ def _bullet_list(items) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
-def _build_verification(task_criteria, room_criteria, task_validation=None) -> str:
+def _build_official_completion_steps(handoff_id: str, peer_id: str) -> str:
+    """Render the mandatory worker-side state transition steps."""
+    handoff = _field(handoff_id)
+    peer = _field(peer_id)
+    return f"""\
+**Official completion steps required:**
+- Do not stop after writing a chat report. The report is not official state.
+- If the handoff is still `open`, run:
+  `.venv/bin/python orchctl handoff claim {handoff} --by {peer}`
+- Then run:
+  `.venv/bin/python orchctl handoff complete {handoff} --by {peer} --summary "..."`
+- Include `--validation-cover`, `--task-criterion-cover`, and `--room-criterion-cover`
+  flags when validation or acceptance criteria are listed above.
+- After `handoff complete` succeeds, notify the CTO/reviewer. Prefer the
+  `claude-peers` MCP channel when available: list machine peers, find the CTO
+  session, then send a concise review-ready message with the handoff id,
+  summary, files changed, verification, risks, and unresolved items.
+- If claim/complete fails, do not call the task done. Report the exact command
+  and error as a blocker."""
+
+
+def _build_verification(task_criteria, room_criteria, task_validation=None,
+                        handoff_id: str = "<handoff-id>",
+                        peer_id: str = "<your-peer-id>") -> str:
     lines = ["When reporting completion, provide:\n"]
 
     has_specific = False
@@ -317,6 +430,8 @@ def _build_verification(task_criteria, room_criteria, task_validation=None) -> s
     lines.append("**In all cases, also report:**")
     lines.append("- List of files created or modified")
     lines.append("- Any risks, edge cases, or deferred items")
+    lines.append("")
+    lines.append(_build_official_completion_steps(handoff_id, peer_id))
 
     return "\n".join(lines)
 
@@ -335,6 +450,34 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
     handoff_status = _field(h.get("status"))
     priority = _field(h.get("priority"))
     kind = _get_handoff_kind(handoff_state)
+
+    execution_mode = _get_execution_mode(handoff_state)
+    child_handoffs = _get_child_handoffs(handoff_state)
+    if execution_mode:
+        execution_mode_line = f"- **Execution mode:** {execution_mode}\n"
+    else:
+        execution_mode_line = ""
+
+    if execution_mode == "delegate_required" and child_handoffs:
+        ledger_rows = []
+        for c in child_handoffs:
+            if not isinstance(c, dict):
+                continue
+            cid = c.get("id") or "(unknown)"
+            model = c.get("model_target") or "(unknown)"
+            cstatus = c.get("status") or "(unknown)"
+            owned = c.get("owned_files") or []
+            owned_count = len(owned) if isinstance(owned, list) else 0
+            ledger_rows.append(f"| {cid} | {model} | {cstatus} | {owned_count} |")
+        subtask_ledger_section = (
+            "\n## Subtask Ledger\n\n"
+            "| ID | Model | Status | Owned Files |\n"
+            "|---|---|---|---|\n"
+            + "\n".join(ledger_rows)
+            + "\n"
+        )
+    else:
+        subtask_ledger_section = ""
 
     goal = _field(context.get("goal"))
     room_status = _field(room.get("status"))
@@ -376,6 +519,8 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
         task.get("acceptance_criteria") or [],
         context.get("acceptance_criteria") or [],
         task.get("validation") or [],
+        handoff_id,
+        assigned_to,
     )
 
     # Rework Delta (only for rework handoffs)
@@ -409,7 +554,7 @@ def _render_brief(handoff_state: dict, room_state: dict) -> str:
 - **Status:** {handoff_status}
 - **Priority:** {priority}
 - **Kind:** {kind}
-{rework_delta_section}
+{execution_mode_line}{rework_delta_section}{subtask_ledger_section}
 ## Room Context
 - **Goal:** {goal}
 - **Room status:** {room_status}
@@ -1494,6 +1639,117 @@ def cmd_handoff_block(args):
 # complete
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# add-subtask
+# ---------------------------------------------------------------------------
+
+VALID_SUBTASK_STATUSES = ("completed", "failed", "escalated")
+
+
+def cmd_handoff_add_subtask(args):
+    """Append a child sub-handoff entry to a parent's execution.child_handoffs.
+
+    Validates parent exists, parent is not in a terminal state
+    (completed/blocked/approved), and that --id is slug-safe. For status=
+    'completed' children, owned_files (>=1) and non-empty evidence are required
+    so that the delegation gate later sees well-formed entries.
+    """
+    parent_id = args.handoff_id
+    sub_id = args.id
+    model_target = args.model_target
+    owned_files = list(args.owned_files or [])
+    status = args.status
+    evidence = args.evidence or ""
+    parent_criterion = getattr(args, "parent_criterion", None) or ""
+
+    require_handoff(parent_id)
+
+    if not is_slug_safe(sub_id):
+        print(
+            f"Error: --id '{sub_id}' is invalid. "
+            f"Use lowercase letters, digits, and hyphens (1-64 chars, no leading/trailing hyphen).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if status not in VALID_SUBTASK_STATUSES:
+        print(
+            f"Error: --status '{status}' is invalid. "
+            f"Valid values: {', '.join(VALID_SUBTASK_STATUSES)}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if status == "completed":
+        if not owned_files:
+            print(
+                f"Error: child status='completed' requires at least one --owned-file entry.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not evidence.strip():
+            print(
+                f"Error: child status='completed' requires non-empty --evidence text.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    path = storage.handoff_path(parent_id)
+    state = storage.read_state(path)
+    if not isinstance(state, dict) or "handoff" not in state:
+        print(f"Error: handoff '{parent_id}' is malformed.", file=sys.stderr)
+        sys.exit(1)
+
+    parent_status = state.get("handoff", {}).get("status", "")
+    if parent_status in ("completed", "blocked"):
+        print(
+            f"Error: Cannot add subtask to handoff '{parent_id}' — parent status is "
+            f"'{parent_status}' (terminal). Subtasks must be recorded before completion.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    review_outcome = (state.get("review") or {}).get("outcome")
+    if review_outcome == "approved":
+        print(
+            f"Error: Cannot add subtask to handoff '{parent_id}' — review outcome is "
+            f"'approved'. Subtasks cannot be recorded after approval.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    entry = {
+        "id": sub_id,
+        "model_target": model_target,
+        "owned_files": list(owned_files),
+        "status": status,
+        "evidence": evidence,
+    }
+    if parent_criterion:
+        entry["parent_criterion"] = parent_criterion
+
+    execution = state.get("execution")
+    if not isinstance(execution, dict):
+        execution = {"mode": "delegate_optional", "child_handoffs": []}
+    children = execution.get("child_handoffs")
+    if not isinstance(children, list):
+        children = []
+    children.append(entry)
+    execution["child_handoffs"] = children
+    if "mode" not in execution:
+        execution["mode"] = "delegate_optional"
+    state["execution"] = execution
+
+    storage.write_state(path, state)
+
+    print(f"Subtask '{sub_id}' added to handoff '{parent_id}'.")
+    print(f"  model_target: {model_target}")
+    print(f"  owned_files:  {len(owned_files)}")
+    print(f"  status:       {status}")
+    if parent_criterion:
+        print(f"  parent_criterion: {parent_criterion}")
+
+
 def cmd_handoff_complete(args):
     handoff_id = args.handoff_id
     peer_id = args.by
@@ -1637,6 +1893,13 @@ def cmd_handoff_complete(args):
                 "criterion_text": room_criteria[idx - 1],
                 "evidence": evidence_text,
             })
+
+    # Hard delegation gate: when execution.mode == 'delegate_required' the
+    # parent must have at least one completed child_handoff with owned_files
+    # and non-empty evidence. The check runs before any state mutation so a
+    # gate violation never leaves a partial write on disk. For other modes
+    # (direct, delegate_optional, absent/legacy) the gate is bypassed.
+    _check_delegation_gate(state, handoff_id)
 
     now = storage.now_iso()
 
