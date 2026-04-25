@@ -23,6 +23,8 @@ from lib.init import cmd_init
 from lib.doctor import cmd_doctor
 from lib.peers import cmd_peer_add, cmd_peer_list, cmd_peer_show, cmd_peer_remove, cmd_peer_update
 from lib.wiki_suggest import cmd_handoff_wiki_suggest
+from lib.gc_audit import cmd_room_gc_audit
+from lib.idle_snapshot import cmd_room_idle_snapshot
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -130,6 +132,28 @@ def build_parser() -> argparse.ArgumentParser:
     rready_p = room_sub.add_parser("readiness", help="Assess room readiness for next action")
     rready_p.add_argument("room_id", metavar="<room-id>")
     rready_p.set_defaults(func=cmd_room_readiness)
+
+    # room gc-audit (V1, read-only)
+    rgc_p = room_sub.add_parser(
+        "gc-audit",
+        help="Read-only V1 audit: which sessions look promoted vs at-risk",
+    )
+    rgc_p.add_argument("room_id", metavar="<room-id>")
+    rgc_p.set_defaults(func=cmd_room_gc_audit)
+
+    # room idle-snapshot (V1, read-only)
+    risnap_p = room_sub.add_parser(
+        "idle-snapshot",
+        help="Read-only operational snapshot of idle candidate sessions",
+    )
+    risnap_p.add_argument("room_id", metavar="<room-id>")
+    risnap_p.add_argument(
+        "--idle-minutes",
+        required=True,
+        dest="idle_minutes",
+        help="Idle threshold in minutes (non-negative integer)",
+    )
+    risnap_p.set_defaults(func=cmd_room_idle_snapshot)
 
     # log subcommand
     log_p = sub.add_parser("log", help="Log management commands")

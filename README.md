@@ -55,6 +55,12 @@ Structured delegation units stored as individual YAML files at `.orchestrator/ha
 
 ---
 
+## Design Philosophy & Trade-offs
+
+자세한 아키텍처 변천사와 실패/타협(Trade-offs)의 기록은 [Architecture Decision Records (ADR)](docs/architecture-decisions.md)에서 확인할 수 있습니다.
+
+---
+
 ## Directory Structure
 
 ```

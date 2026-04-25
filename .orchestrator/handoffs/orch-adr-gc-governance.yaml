@@ -1,0 +1,33 @@
+handoff:
+  id: orch-adr-gc-governance
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-b-adr
+  status: open
+  priority: medium
+  kind: implementation
+task:
+  description: 'ADR governance docs: lock V1/V2/V3 boundary for gc-audit and idle
+    cleanup roadmap.'
+  scope: 'Allowed files only: docs/architecture-decisions.md and docs/agent-debate-records.md
+    only if appending Debate 002 record is needed.'
+  constraints:
+  - 다른 세션도 같은 레포에서 작업 중입니다. unrelated dirty/untracked changes를 절대 되돌리지 마세요. 자기 allowed
+    files 밖은 수정하지 마세요.
+  - Document V1 read-only gc-audit, no YAML/wiki/tmux/provider context mutation, no
+    V2 archive stub, no top-level archive green-light fields, V2 --from-report absolute
+    path requirements, V3+ automatic idle cleanup.
+  acceptance_criteria: []
+  report_back: ''
+  non_goals:
+  - Do not edit code or tests.
+  invariants:
+  - Docs must not imply V1 report can trigger archive automatically.
+  failure_examples: []
+  validation:
+  - Report the exact sections added or changed.
+timestamps:
+  created_at: '2026-04-24T11:31:18Z'
+  claimed_at: null
+  completed_at: null

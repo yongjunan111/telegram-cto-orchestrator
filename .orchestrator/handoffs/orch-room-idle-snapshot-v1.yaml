@@ -1,0 +1,186 @@
+handoff:
+  id: orch-room-idle-snapshot-v1
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-d-gc-audit
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'Implement read-only Idle Snapshot V1: new orchctl command ''room idle-snapshot
+    <room-id> --idle-minutes N'' that produces a markdown operational snapshot at
+    .orchestrator/runtime/idle-snapshots/<room-id>/<timestamp>.md describing room
+    state, handoff summary by status, and idle candidate sessions with last_active_at/heartbeat_at-based
+    idle duration. Purpose is preservation of work, NOT archive eligibility (gc-audit
+    is for that). Tier 1 = YAML+git authoritative; Tier 2 = tmux liveness/pane capture
+    as runtime_observation only, never affecting flags. Output recommendations use
+    exact tokens: needs_worker_complete, needs_cto_review, at_risk, unbound, parse_error,
+    repair_needed.'
+  scope: 'Allowed files ONLY: lib/idle_snapshot.py (NEW), orchctl (subparser wiring
+    + import only — no other handler edits), tests/test_idle_snapshot.py (NEW). Other
+    sessions are active in this repo — do NOT revert unrelated dirty/untracked changes
+    (paper-radar style or otherwise). Do NOT touch lib/gc_audit.py, lib/checkpoints.py,
+    lib/dispatch.py, lib/sessions.py, lib/validators.py, docs/, .orchestrator/, pyproject.toml.'
+  constraints:
+  - 'Recommendation token list is locked: needs_worker_complete, needs_cto_review,
+    at_risk, unbound, parse_error, repair_needed. No other recommendation tokens.'
+  - 'Report header MUST include the literal line: ''> This is a read-only operational
+    snapshot. Not authoritative state. Does not authorize any archive/compact/kill
+    action.'''
+  - Use storage.safe_write_text (containment + symlink-refuse + atomic rename). Never
+    write outside .orchestrator/runtime/idle-snapshots/<room-id>/.
+  - Validate room_id with is_slug_safe before deriving any path. Validate session
+    YAML handoff_id with is_slug_safe before passing to storage.handoff_path (same
+    invariant locked for gc-audit and checkpoints).
+  - 'Idle threshold filter: a session is ''idle candidate'' iff last_active_at OR
+    heartbeat_at is older than --idle-minutes. Sessions without either timestamp must
+    be classified as parse_error (or repair_needed if YAML is otherwise readable but
+    key missing — pick one and document).'
+  - tmux liveness/pane-capture data, if collected, lives ONLY in a runtime_observation
+    block (or omitted entirely in V1). It MUST NOT influence any recommendation token.
+  acceptance_criteria:
+  - 'CLI: ''orchctl room idle-snapshot <room-id> --idle-minutes N'' creates .orchestrator/runtime/idle-snapshots/<room-id>/<UTC-iso-timestamp>.md
+    and prints the path.'
+  - 'Report contains: room id/name/status/phase/current_summary/next_action; handoff
+    summary grouped by status (open/claimed/completed/blocked) with review state for
+    completed; idle candidate session block per session including session_id, peer_id,
+    status, mode, room_id, handoff_id, idle duration, last_launch_status if present,
+    related handoff status/review state, latest dispatch artifact path, latest bootstrap
+    path, latest checkpoint path if any, resolution summary if related handoff completed;
+    recommendations list using only the locked token set.'
+  - open/claimed handoff + idle session yields needs_worker_complete recommendation.
+    completed + pending_review yields needs_cto_review. malformed/unsafe session refs
+    yield parse_error or repair_needed (no path traversal, no exception escape).
+  - 'All tests pass: targeted tests/test_idle_snapshot.py + full ''uv run pytest tests/
+    -q'' (193+ existing tests must remain green).'
+  - 'Manual smoke: running ''orchctl room idle-snapshot orchestrator-hardening-gc-v1
+    --idle-minutes 1'' on the current dirty repo produces a snapshot file without
+    raising and without modifying any YAML.'
+  report_back: 'Post in CTO Telegram thread when complete: (a) report path of a smoke-test
+    snapshot, (b) test count delta (before/after), (c) any decisions made on parse_error
+    vs repair_needed boundary, (d) any deviations from this handoff''s constraints
+    with rationale.'
+  non_goals:
+  - V2 'session archive' command (deferred).
+  - V3 automatic idle cleanup or cron/timer integration (deferred).
+  - Post-complete notification hook (separate track).
+  - session_id truncation bug fix (separate follow-up).
+  - Original open-handoff cleanup for orch-foundation-fixes / orch-dispatch-degraded-launch
+    / orch-room-gc-audit-v1 / orch-adr-gc-governance (separate follow-up).
+  - Statusline / Node IPv6 / Codex login / paper-radar work — out of scope this handoff.
+  - Modifying lib/gc_audit.py to share code (V1 is independent; refactor only after
+    both stabilize).
+  - Adding archive eligibility verdicts (promoted/at-risk/coherent etc. belong to
+    gc-audit, not idle-snapshot).
+  invariants:
+  - 'Read-only: no room/handoff/session YAML mutation. Pre/post invocation YAML byte
+    hashes MUST be identical (test enforced).'
+  - No wiki write. No tmux kill/respawn/send-keys. No provider compact/archive call.
+    No git fetch. No session_id generation.
+  - No top-level fields named archive_ready / safe_to_archive / can_archive / green_light
+    / ready_for_archive / auto_archive_eligible in the report (string scan test).
+  - No V2 archive command stub or scaffold added. No post-complete notification hook
+    added. No cron/timer code added.
+  - Report path must resolve under .orchestrator/runtime/idle-snapshots/<room-id>/
+    — symlink containment enforced via safe_write_text.
+  failure_examples:
+  - 'Report includes any of: archive_ready, safe_to_archive, can_archive, green_light,
+    ready_for_archive, auto_archive_eligible — even as a comment.'
+  - tmux pane capture is used to determine idle status, overriding YAML last_active_at.
+  - Running the command leaves any room/handoff/session YAML with a different SHA-256
+    than before invocation.
+  - Snapshot file is written outside .orchestrator/runtime/idle-snapshots/<room-id>/
+    via path traversal (e.g. via attacker-controlled session.handoff_id like '../../etc/foo').
+  validation:
+  - 'Run: uv run pytest tests/test_idle_snapshot.py -v'
+  - 'Run full suite: uv run pytest tests/ -q (verify count >= 199 and all green)'
+  - 'Run: orchctl room idle-snapshot orchestrator-hardening-gc-v1 --idle-minutes 1
+    (verify file created under .orchestrator/runtime/idle-snapshots/orchestrator-hardening-gc-v1/,
+    verify forbidden-word grep returns nothing: ''archive_ready|safe_to_archive|can_archive|green_light|ready_for_archive|auto_archive_eligible'')'
+timestamps:
+  created_at: '2026-04-25T04:54:17Z'
+  claimed_at: '2026-04-25T05:01:36Z'
+  completed_at: '2026-04-25T05:02:11Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: 'Run: uv run pytest tests/test_idle_snapshot.py -v'
+    evidence: uv run pytest tests/test_idle_snapshot.py -v → 17 passed in 0.11s
+  - validation_index: 2
+    validation_text: 'Run full suite: uv run pytest tests/ -q (verify count >= 199
+      and all green)'
+    evidence: uv run pytest tests/ -q → 212 passed in 0.89s (>= 199 required)
+  - validation_index: 3
+    validation_text: 'Run: orchctl room idle-snapshot orchestrator-hardening-gc-v1
+      --idle-minutes 1 (verify file created under .orchestrator/runtime/idle-snapshots/orchestrator-hardening-gc-v1/,
+      verify forbidden-word grep returns nothing: ''archive_ready|safe_to_archive|can_archive|green_light|ready_for_archive|auto_archive_eligible'')'
+    evidence: Smoke command produced /home/dydwn/projects/telegram-cto-orchestrator/.orchestrator/runtime/idle-snapshots/orchestrator-hardening-gc-v1/2026-04-25T05-01-10.990699Z.md;
+      forbidden-word grep returned exit=1 (no matches)
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'CLI: ''orchctl room idle-snapshot <room-id> --idle-minutes
+        N'' creates .orchestrator/runtime/idle-snapshots/<room-id>/<UTC-iso-timestamp>.md
+        and prints the path.'
+      evidence: CLI prints absolute path to .orchestrator/runtime/idle-snapshots/orchestrator-hardening-gc-v1/2026-04-25T05-01-10.990699Z.md
+        (filesystem-safe UTC ISO timestamp YYYY-MM-DDTHH-MM-SS.ffffffZ)
+    - criterion_index: 2
+      criterion_text: 'Report contains: room id/name/status/phase/current_summary/next_action;
+        handoff summary grouped by status (open/claimed/completed/blocked) with review
+        state for completed; idle candidate session block per session including session_id,
+        peer_id, status, mode, room_id, handoff_id, idle duration, last_launch_status
+        if present, related handoff status/review state, latest dispatch artifact
+        path, latest bootstrap path, latest checkpoint path if any, resolution summary
+        if related handoff completed; recommendations list using only the locked token
+        set.'
+      evidence: test_report_contains_room_and_handoff_summary verifies room id/name/status/phase/current_summary;
+        smoke output shows Handoff Summary grouped open/claimed/completed/blocked,
+        8 idle session blocks with peer_id/status/mode/room_id/handoff_id/idle duration/last_launch_status/related
+        handoff status+review/dispatch artifact/bootstrap/checkpoint/resolution summary;
+        recommendations list uses only locked tokens (test_report_only_uses_locked_recommendation_tokens)
+    - criterion_index: 3
+      criterion_text: open/claimed handoff + idle session yields needs_worker_complete
+        recommendation. completed + pending_review yields needs_cto_review. malformed/unsafe
+        session refs yield parse_error or repair_needed (no path traversal, no exception
+        escape).
+      evidence: test_open_handoff_idle_session_recommends_needs_worker_complete +
+        test_claimed_handoff_idle_session_recommends_needs_worker_complete + test_completed_pending_review_recommends_needs_cto_review
+        + test_malformed_session_yaml_is_parse_error + test_unsafe_handoff_id_classifies_parse_error_no_path_traversal
+        + test_session_with_no_timestamps_is_repair_needed all pass
+    - criterion_index: 4
+      criterion_text: 'All tests pass: targeted tests/test_idle_snapshot.py + full
+        ''uv run pytest tests/ -q'' (193+ existing tests must remain green).'
+      evidence: Targeted suite 17/17 green; full suite 212/212 green (baseline 195
+        + 17 new), exceeds 193+ requirement
+    - criterion_index: 5
+      criterion_text: 'Manual smoke: running ''orchctl room idle-snapshot orchestrator-hardening-gc-v1
+        --idle-minutes 1'' on the current dirty repo produces a snapshot file without
+        raising and without modifying any YAML.'
+      evidence: Smoke run on orchestrator-hardening-gc-v1 with --idle-minutes 1 produced
+        snapshot file without exception; sorted SHA-256 hash table of .orchestrator/**.yaml
+        is identical before/after (diff /tmp/b.sorted /tmp/a.sorted empty)
+    room: []
+  completed_by: orch-worker-d-gc-audit
+  summary: 'Idle Snapshot V1 shipped: lib/idle_snapshot.py + orchctl subparser + tests/test_idle_snapshot.py.
+    17 new tests, 212 total green. Smoke run on orchestrator-hardening-gc-v1 produced
+    snapshot with 8 needs_worker_complete recommendations and zero YAML mutation (SHA-256
+    verified).'
+  files_changed:
+  - lib/idle_snapshot.py
+  - orchctl
+  - tests/test_idle_snapshot.py
+  verification:
+  - 'uv run pytest tests/test_idle_snapshot.py -v: 17 passed in 0.11s'
+  - 'uv run pytest tests/ -q: 212 passed in 0.89s (was 195, +17)'
+  - 'Smoke: orchctl room idle-snapshot orchestrator-hardening-gc-v1 --idle-minutes
+    1 → wrote 2026-04-25T05-01-10.990699Z.md; forbidden-word grep exit=1 (no matches);
+    SHA-256 hashes of all .orchestrator/**.yaml identical pre/post'
+  risks:
+  - Worker name truncation in session_id (e.g. orch-worker-c-dispat-orch-dispatch-degraded-launch-)
+    is a separate handoff non-goal; idle-snapshot tolerates it but the IDs look ugly
+    in the report
+  - 'Boundary decision documented in code+tests: missing-both-timestamps → repair_needed
+    (key recoverable); malformed YAML or unsafe handoff_id → parse_error (binding
+    cannot be trusted). Handoff contract said ''pick one and document'' — I picked
+    the recoverable-vs-untrustworthy split'

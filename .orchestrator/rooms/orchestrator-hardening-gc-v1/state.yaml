@@ -1,0 +1,31 @@
+room:
+  id: orchestrator-hardening-gc-v1
+  name: Orchestrator V1 Hardening + GC Audit
+  status: active
+  program_id: null
+  created_at: '2026-04-24T11:30:12Z'
+  updated_at: '2026-04-25T08:09:33Z'
+context:
+  goal: Foundation fixes, ADR governance, dispatch degraded launch surfacing, and
+    read-only room gc-audit V1
+  request_summary: ''
+  current_summary: ''
+  open_questions: []
+  constraints: []
+  acceptance_criteria: []
+  execution_cwd: /home/dydwn/projects/telegram-cto-orchestrator
+lifecycle:
+  current_phase: execution
+  next_action: ''
+  blocker_summary: ''
+  blocked_by: null
+discovery:
+  problem_statement: ''
+  confirmed_facts: []
+  assumptions: []
+  options_considered: []
+  decisions_made: []
+  dependencies: []
+  implementation_unknowns: []
+  chosen_direction: ''
+  readiness_notes: ''

@@ -1,0 +1,44 @@
+handoff:
+  id: orch-room-gc-audit-v1-rework-1
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-d-gc-audit
+  status: open
+  priority: high
+  kind: implementation
+task:
+  description: 'Rework orch-room-gc-audit-v1 (two P2 issues from Codex review): (1)
+    validate session YAML handoff_id with validate_slug/is_slug_safe BEFORE passing
+    to storage.handoff_path (same invariant we locked for checkpoints). (2) align
+    reason code contract with the planned lock list.'
+  scope: 'Allowed files only: lib/gc_audit.py, tests/test_gc_audit.py. Other sessions
+    active — do not revert unrelated dirty/untracked changes.'
+  constraints:
+  - 'Parent handoff: orch-room-gc-audit-v1 (no rework_of lineage because parent never
+    reached completed; this is operational follow-up).'
+  - 'Contracted reason code list (V2 consumer will read these verbatim): pending_review,
+    changes_requested_pending, dirty_git, cwd_missing, cwd_not_absolute, session_busy,
+    ahead_of_remote, behind_remote, detached_head, inside_submodule, no_git_dir, foreign_owner,
+    parse-error. Rename/replace any divergent reason keys (e.g. ahead_of_upstream
+    → ahead_of_remote, git_unavailable_for_cwd → cwd_missing if semantically equivalent,
+    else add the missing ones).'
+  - 'Add test for unsafe handoff_id: when session YAML handoff_id is non-slug-safe
+    (e.g. ''../evil''), gc-audit must NOT open storage.handoff_path with that value,
+    and must classify the session as parse-error (or unbound with explicit reason
+    — pick one and document it in the test).'
+  acceptance_criteria: []
+  report_back: ''
+  non_goals:
+  - Do not touch dispatch.py, checkpoints, sessions, validators, docs, orchctl parser,
+    pyproject, .gitignore.
+  invariants:
+  - Still read-only (no YAML/wiki/tmux mutation, no git fetch). No top-level safe_to_archive/archive_ready/can_archive
+    fields in report.
+  failure_examples: []
+  validation:
+  - Run tests/test_gc_audit.py targeted, then uv run pytest tests/ -q.
+timestamps:
+  created_at: '2026-04-24T16:19:40Z'
+  claimed_at: null
+  completed_at: null
