@@ -352,3 +352,25 @@ Begin execution now.
 - **Recommendation:** ready for CTO review
 - *Note: This is an internal QA report. Official handoff review is pending official CTO/reviewer decision.*
 ```
+
+---
+
+## Delegate-Required Hard Mode (V1)
+
+When the parent handoff's `execution.mode` is `delegate_required`, the
+default-direct posture above does NOT apply. The team lead MUST decompose
+and MUST NOT edit files directly. The bootstrap renders a hard
+`DELEGATION REQUIRED — DO NOT IMPLEMENT DIRECTLY` block at the top of the
+team lead protocol, and the completion gate refuses direct-edit
+completions.
+
+References:
+
+- Operational rule and read-only cleanup report: `docs/session-cleanup-policy.md`
+  (delivered by handoff `orch-session-cleanup-policy-v1`).
+- Schema and completion gate contract: handoff `orch-delegation-gate-schema`
+  (the `execution` block, `child_handoffs` list, and gate behavior live there).
+
+If you are editing this format spec because you need a new sub-handoff
+field, check those two contracts first — the gate likely already covers
+your use case.

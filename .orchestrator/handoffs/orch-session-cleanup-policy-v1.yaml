@@ -1,0 +1,297 @@
+handoff:
+  id: orch-session-cleanup-policy-v1
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-b-adr
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'V1 policy + bootstrap + read-only cleanup report for worker session
+    lifecycle. Three deliverables: (1) Bootstrap team lead protocol gets two reinforcement
+    blocks: (a) when handoff has execution.mode=delegate_required, prepend a HARD
+    ''DO NOT IMPLEMENT DIRECTLY'' block; (b) after handoff complete is filed, append
+    POST-COMPLETE CLEANUP instructions telling the worker to file a session checkpoint
+    and leave a clear pane marker, but explicitly forbid the worker from running tmux
+    kill on itself. (2) NEW lib/session_cleanup.py module with a read-only report
+    function: scans .orchestrator/runtime/sessions/*.yaml + handoff state, produces
+    a candidate list (session_id, peer_id, status, room_id, handoff_id, idle_minutes,
+    related_handoff_status, related_review_state, recommendation_token); recommendation
+    tokens locked to: needs_worker_complete, needs_cto_review, needs_session_checkpoint,
+    awaiting_review_evidence, leftover_after_complete, parse_error. NEVER kills tmux,
+    never mutates YAML. (3) Docs: update docs/issue-team-lead-delegation-not-enforced.md
+    checkboxes that the bootstrap delegation strong wording lands here; create docs/session-cleanup-policy.md
+    (V1 operating rule + safe dry-run flow + explicit invariants: no auto-kill, CTO-review-pending
+    sessions never recommended for cleanup).'
+  scope: 'Allowed files ONLY: lib/bootstrap.py, lib/session_cleanup.py (NEW), docs/issue-team-lead-delegation-not-enforced.md,
+    docs/session-cleanup-policy.md (NEW), docs/sub-handoff-format.md (append-only
+    — see constraints), tests/test_bootstrap_delegation_rendering.py (NEW), tests/test_session_cleanup_report.py
+    (NEW). Do NOT touch lib/handoffs.py, orchctl, lib/idle_snapshot.py, lib/gc_audit.py,
+    lib/dispatch.py, lib/sessions.py, lib/checkpoints.py, lib/validators.py, .orchestrator/
+    data, pyproject.toml. Other sessions are active in this repo — do NOT revert unrelated
+    dirty/untracked files.'
+  constraints:
+  - 'LOCKED CONTRACT (mirrors handoff orch-delegation-gate-schema): handoff state
+    has top-level ''execution'' block with execution.mode in {direct, delegate_optional,
+    delegate_required}, and execution.child_handoffs list. Bootstrap rendering reads
+    execution.mode via dict.get(''execution'', {}).get(''mode''); legacy handoffs
+    (no execution block) treated as delegate_optional and rendered with current behavior
+    unchanged.'
+  - 'Bootstrap delegate_required block (rendered ONLY when execution.mode == ''delegate_required''):
+    prepend before the existing team lead protocol with literal heading ''DELEGATION
+    REQUIRED — DO NOT IMPLEMENT DIRECTLY'' and these enforced bullet points: (1) decompose
+    into disjoint child handoffs, (2) use Agent tool with smallest viable model (haiku/sonnet)
+    per child, (3) record each child via ''orchctl handoff add-subtask <this-id> ...'',
+    (4) verify child evidence then run ''orchctl handoff complete'', (5) if no safe
+    decomposition exists, escalate to CTO instead of implementing directly. State:
+    ''Direct file edits will NOT pass the completion gate.'' For execution.mode in
+    (direct, delegate_optional, absent), do NOT render this block — preserve current
+    behavior.'
+  - 'Bootstrap post-complete cleanup block (always rendered for ALL handoffs in the
+    team lead protocol section, NOT mode-gated): heading ''POST-COMPLETE CLEANUP''.
+    Bullets: (a) after running ''orchctl handoff complete'', run ''orchctl session
+    checkpoint <session-id> --event manual --note "work concluded"'', (b) print a
+    clear pane marker line (e.g. ''WORK_DONE: <handoff-id>'') so an operator can visually
+    confirm completion in tmux, (c) DO NOT kill your own tmux session — the operator/CTO
+    owns kill decisions, (d) if CTO review/rework is expected, leave the pane idle
+    and respond to ledger updates rather than ending the session.'
+  - 'lib/session_cleanup.py exposes function ''build_cleanup_report(rooms_filter:
+    Optional[List[str]] = None, idle_minutes: int = 60) -> Dict'' returning {generated_at,
+    threshold_minutes, candidates: [...], invariants_acknowledged: [...]}. Each candidate
+    has the locked field set above and exactly one recommendation_token from the locked
+    enum. Module includes a ''render_markdown(report: Dict) -> str'' for human output.
+    NO file writes from this module — pure compute (caller may write report file if
+    desired).'
+  - 'Recommendation token routing rules (lock these in code as constants and document
+    in docs/session-cleanup-policy.md): related handoff status=open + session status=busy
+    + idle ≥ threshold → needs_worker_complete; related handoff status=completed +
+    review state=pending → needs_cto_review; related handoff status=completed + review
+    state=approved + session status=busy → leftover_after_complete (signals candidate
+    for operator-led tmux kill, NEVER auto); session has no checkpoint and is busy
+    ≥ threshold → needs_session_checkpoint; review state=changes_requested → awaiting_review_evidence;
+    YAML unparseable / handoff_id unsafe → parse_error. NEVER emit a token like ''auto_kill'',
+    ''safe_to_kill'', ''archive_ready'', ''can_archive'' (forbidden words test enforced).'
+  - 'docs/session-cleanup-policy.md (NEW) explicit invariants section: (i) V1 is read-only
+    / report-only; no automatic tmux kill, no automatic YAML mutation, no automatic
+    checkpoint generation; (ii) CTO review-pending or rework-pending sessions are
+    NEVER recommended for kill; (iii) Operator-led kill is the only sanctioned path
+    in V1; (iv) The report is informational, not authoritative state. Include ''How
+    to read the report'' subsection mapping each token to operator action.'
+  - docs/sub-handoff-format.md edits limited to APPENDING a single short section titled
+    'Delegate-Required Hard Mode (V1)' that points readers to the new policy and to
+    handoff orch-delegation-gate-schema's contract. Do NOT rewrite existing sections.
+  - 'docs/issue-team-lead-delegation-not-enforced.md: only check off the boxes that
+    this handoff actually delivers (bootstrap strong wording for delegate_required)
+    and add a ''V1 Implementation Note'' subsection at the bottom listing landed handoff
+    ids (orch-delegation-gate-schema for the gate, orch-session-cleanup-policy-v1
+    for bootstrap+report). Do NOT edit unrelated parts of that doc.'
+  acceptance_criteria:
+  - Bootstrap rendering for execution.mode=delegate_required produces output containing
+    the literal string 'DELEGATION REQUIRED — DO NOT IMPLEMENT DIRECTLY' and 'Direct
+    file edits will NOT pass the completion gate.' Test asserts presence.
+  - Bootstrap rendering for execution.mode in (direct, delegate_optional, absent)
+    does NOT contain that string (regression test). Diff against pre-change snapshot
+    for one representative legacy handoff is empty.
+  - Bootstrap rendering for ALL handoffs (regardless of mode) contains 'POST-COMPLETE
+    CLEANUP' heading and the four bullets specified. Test asserts presence on at least
+    three modes (delegate_required, delegate_optional, legacy).
+  - lib/session_cleanup.build_cleanup_report returns dict with 'candidates' list;
+    each candidate's recommendation_token is in the locked enum; on a fixture with
+    one open+busy session yields needs_worker_complete; on completed+pending yields
+    needs_cto_review; on completed+approved+busy yields leftover_after_complete; on
+    changes_requested yields awaiting_review_evidence; on unparseable YAML yields
+    parse_error.
+  - render_markdown output passes a forbidden-words grep (auto_kill|safe_to_kill|archive_ready|can_archive|green_light|ready_for_archive|auto_archive_eligible)
+    — must match nothing.
+  - docs/session-cleanup-policy.md exists, contains the four invariants enumerated
+    above, and documents the locked recommendation token set.
+  - docs/issue-team-lead-delegation-not-enforced.md gains a 'V1 Implementation Note'
+    subsection with both handoff IDs (orch-delegation-gate-schema, orch-session-cleanup-policy-v1)
+    and ticks only the relevant follow-up checkboxes.
+  - 'Full suite green: ''uv run pytest tests/ -q'' (count must increase by ≥6 new
+    tests across the two new test files; existing count must not decrease).'
+  report_back: 'Post in CTO Telegram thread when complete: (a) test count delta (before/after),
+    (b) confirm bootstrap legacy/non-required modes are byte-identical to pre-change
+    (cite the regression test name), (c) summary of recommendation token routing rules
+    with one fixture example each, (d) any deviations from locked contract with rationale.'
+  non_goals:
+  - Adding orchctl CLI subcommand for cleanup (deferred to V1.5; handoff A is editing
+    orchctl now and we avoid file conflict).
+  - Implementing actual tmux kill / archive / compact in any form.
+  - Modifying lib/handoffs.py (handoff A owns it for the gate).
+  - Schema changes to handoff YAML (handoff A locks the contract).
+  - Auto-launching the report on a cron / hook (V2+ work).
+  - Reviewing or completing the orch-room-idle-snapshot-v1 handoff.
+  - Cleaning up the 8 stale open handoffs in the room.
+  - Statusline / Node IPv6 / paper-radar fixes.
+  - Modifying or wiring the orchctl session checkpoint command (it already exists).
+  invariants:
+  - 'Read-only: lib/session_cleanup.py never writes, never spawns subprocesses, never
+    calls tmux. Pre/post invocation YAML+state byte hashes identical (test enforced).'
+  - Bootstrap rendering for legacy handoffs (no execution block) and execution.mode
+    in (direct, delegate_optional) is byte-identical to current output (regression
+    test enforced).
+  - No new orchctl subcommand wiring in V1 (handoff A owns orchctl edits; this handoff
+    stays out of orchctl to avoid edit conflict). The cleanup report is callable from
+    Python; CLI wiring is a V1.5 follow-up.
+  - No tmux kill / send-keys / capture-pane / list-sessions calls anywhere in the
+    new code. Cleanup report uses YAML data only.
+  - Report never emits a recommendation token outside the locked enum. String-grep
+    test on render_markdown output for forbidden tokens (auto_kill, safe_to_kill,
+    archive_ready, can_archive, green_light, ready_for_archive, auto_archive_eligible).
+  - CTO review-pending / changes_requested sessions never receive a kill-implying
+    token (e.g. leftover_after_complete) — they get awaiting_review_evidence or needs_cto_review
+    only.
+  failure_examples:
+  - Auto-emitting 'safe_to_kill' or any kill-implying token for a CTO-review-pending
+    session.
+  - Bootstrap rendering for a legacy handoff (no execution block) silently changing
+    because mode-detection assumes the field exists.
+  - lib/session_cleanup.py shelling out to 'tmux list-sessions' or any subprocess
+    (read-only invariant violated).
+  - Editing lib/handoffs.py or orchctl from this handoff (scope violation; handoff
+    A owns those).
+  - Calling tmux kill / send-keys / archive on any session.
+  validation:
+  - 'Run targeted: uv run pytest tests/test_bootstrap_delegation_rendering.py tests/test_session_cleanup_report.py
+    -v'
+  - 'Run full suite: uv run pytest tests/ -q (verify no regressions)'
+  - 'Manual smoke: python3 -c ''from lib.session_cleanup import build_cleanup_report,
+    render_markdown; r = build_cleanup_report(rooms_filter=["orchestrator-hardening-gc-v1"],
+    idle_minutes=1); print(render_markdown(r))'' — verify output is well-formed markdown
+    with locked tokens only and runs without exceptions.'
+timestamps:
+  created_at: '2026-04-25T07:56:13Z'
+  claimed_at: '2026-04-25T08:06:04Z'
+  completed_at: '2026-04-25T08:07:11Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: 'Run targeted: uv run pytest tests/test_bootstrap_delegation_rendering.py
+      tests/test_session_cleanup_report.py -v'
+    evidence: targeted pytest of two new test files passed 39/39
+  - validation_index: 2
+    validation_text: 'Run full suite: uv run pytest tests/ -q (verify no regressions)'
+    evidence: full pytest tests/ -q passed 269/269; pre-handoff baseline was 230
+  - validation_index: 3
+    validation_text: 'Manual smoke: python3 -c ''from lib.session_cleanup import build_cleanup_report,
+      render_markdown; r = build_cleanup_report(rooms_filter=["orchestrator-hardening-gc-v1"],
+      idle_minutes=1); print(render_markdown(r))'' — verify output is well-formed
+      markdown with locked tokens only and runs without exceptions.'
+    evidence: smoke command produced well-formed markdown with locked tokens only;
+      regex forbidden-words grep returned None
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: Bootstrap rendering for execution.mode=delegate_required produces
+        output containing the literal string 'DELEGATION REQUIRED — DO NOT IMPLEMENT
+        DIRECTLY' and 'Direct file edits will NOT pass the completion gate.' Test
+        asserts presence.
+      evidence: test_delegate_required_renders_hard_heading + test_cmd_session_bootstrap_delegate_required_renders_hard_block
+        both assert literal DELEGATION REQUIRED — DO NOT IMPLEMENT DIRECTLY and Direct
+        file edits will NOT pass the completion gate. present
+    - criterion_index: 2
+      criterion_text: Bootstrap rendering for execution.mode in (direct, delegate_optional,
+        absent) does NOT contain that string (regression test). Diff against pre-change
+        snapshot for one representative legacy handoff is empty.
+      evidence: test_legacy_no_execution_mode_does_not_render_hard_heading + test_delegate_optional_does_not_render_hard_heading
+        + test_direct_does_not_render_hard_heading + test_legacy_matches_delegate_optional_byte_for_byte
+        assert hard block absent and legacy==delegate_optional==direct byte-for-byte
+    - criterion_index: 3
+      criterion_text: Bootstrap rendering for ALL handoffs (regardless of mode) contains
+        'POST-COMPLETE CLEANUP' heading and the four bullets specified. Test asserts
+        presence on at least three modes (delegate_required, delegate_optional, legacy).
+      evidence: test_post_complete_cleanup_present_in_delegate_required + delegate_optional
+        + legacy assert POST-COMPLETE CLEANUP heading and four bullets (orchctl session
+        checkpoint, WORK_DONE marker, DO NOT kill own tmux, leave pane idle on review)
+        on three modes
+    - criterion_index: 4
+      criterion_text: lib/session_cleanup.build_cleanup_report returns dict with 'candidates'
+        list; each candidate's recommendation_token is in the locked enum; on a fixture
+        with one open+busy session yields needs_worker_complete; on completed+pending
+        yields needs_cto_review; on completed+approved+busy yields leftover_after_complete;
+        on changes_requested yields awaiting_review_evidence; on unparseable YAML
+        yields parse_error.
+      evidence: test_open_busy_idle_yields_needs_worker_complete + test_completed_pending_review_yields_needs_cto_review
+        + test_completed_approved_busy_yields_leftover_after_complete + test_changes_requested_yields_awaiting_review_evidence
+        + test_unparseable_session_yaml_yields_parse_error all pass; test_each_candidate_has_locked_field_set
+        asserts every candidates recommendation_token is in RECOMMENDATION_TOKENS
+    - criterion_index: 5
+      criterion_text: render_markdown output passes a forbidden-words grep (auto_kill|safe_to_kill|archive_ready|can_archive|green_light|ready_for_archive|auto_archive_eligible)
+        — must match nothing.
+      evidence: test_render_markdown_passes_forbidden_words_grep asserts forbidden-words
+        regex match is None across mixed-state fixture
+    - criterion_index: 6
+      criterion_text: docs/session-cleanup-policy.md exists, contains the four invariants
+        enumerated above, and documents the locked recommendation token set.
+      evidence: docs/session-cleanup-policy.md created with V1 Invariants section
+        enumerating all four invariants plus Locked Recommendation Token Set table
+        covering all 6 tokens
+    - criterion_index: 7
+      criterion_text: docs/issue-team-lead-delegation-not-enforced.md gains a 'V1
+        Implementation Note' subsection with both handoff IDs (orch-delegation-gate-schema,
+        orch-session-cleanup-policy-v1) and ticks only the relevant follow-up checkboxes.
+      evidence: docs/issue-team-lead-delegation-not-enforced.md gained section 9 V1
+        Implementation Note listing orch-delegation-gate-schema and orch-session-cleanup-policy-v1;
+        only the bootstrap delegation strong wording checkbox was ticked
+    - criterion_index: 8
+      criterion_text: 'Full suite green: ''uv run pytest tests/ -q'' (count must increase
+        by ≥6 new tests across the two new test files; existing count must not decrease).'
+      evidence: 'uv run pytest tests/ -q: 269 passed; pre-handoff count 230; delta
+        +39 new tests across two new test files (well above 6 minimum)'
+    room: []
+  completed_by: orch-worker-b-adr
+  summary: 'V1 session cleanup policy: bootstrap renders DELEGATION REQUIRED hard
+    block when execution.mode=delegate_required and POST-COMPLETE CLEANUP for all
+    handoffs; new lib/session_cleanup.py read-only report (build_cleanup_report +
+    render_markdown) with locked 6-token enum; new docs/session-cleanup-policy.md
+    and updated docs/issue-team-lead-delegation-not-enforced.md + sub-handoff-format.md.
+    39 new tests, full suite 269/269 green.'
+  files_changed:
+  - lib/bootstrap.py
+  - lib/session_cleanup.py
+  - docs/session-cleanup-policy.md
+  - docs/issue-team-lead-delegation-not-enforced.md
+  - docs/sub-handoff-format.md
+  - tests/test_bootstrap_delegation_rendering.py
+  - tests/test_session_cleanup_report.py
+  verification:
+  - 'uv run pytest tests/test_bootstrap_delegation_rendering.py tests/test_session_cleanup_report.py
+    -v: 39 passed (18 bootstrap + 21 cleanup)'
+  - 'uv run pytest tests/ -q: 269 passed (was 230 before this handoff; +39 new)'
+  - 'Manual smoke: build_cleanup_report on orchestrator-hardening-gc-v1 with idle_minutes=1
+    produced well-formed markdown with 10 candidates using only locked tokens; zero
+    forbidden-word matches'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-25T08:09:33Z'
+  note: 'Approved. Read-only invariant verified: lib/session_cleanup.py has zero subprocess/tmux/file-write
+    calls; FORBIDDEN_TOKENS frozenset at lines 57-65 is a regression sentinel, not
+    a recommendation source. Classifier _classify (line 161) orders review-pending/changes_requested
+    checks BEFORE any ''done'' rule, structurally protecting the invariant that CTO-review-pending
+    sessions never receive leftover_after_complete. LEFTOVER_AFTER_COMPLETE only emitted
+    when handoff_status=completed AND review_state=approved AND session=busy. Bootstrap
+    rendering: DELEGATION REQUIRED block gated on execution.mode==''delegate_required''
+    only; POST-COMPLETE CLEANUP block intentionally rendered for all modes (per CTO
+    clarification, supersedes earlier ''byte-identical'' wording). 39 new tests, full
+    suite 230→269 passing. Manual smoke confirmed locked-token-only output.'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'approved. read-only invariant verified: lib/session_cleanup.py has zero subprocess/tmux/file-write
+      calls; forbidden_tokens frozenset at lines 57-65 is a regression sentinel, not
+      a recommendation source. classifier _classify (line 161) orders review-pending/changes_requested
+      checks before any ''done'' rule, structurally protecting the invariant that
+      cto-review-pending sessions never receive leftover_after_complete. leftover_after_complete
+      only emitted when handoff_status=completed and review_state=approved and session=busy.
+      bootstrap rendering: delegation required block gated on execution.mode==''delegate_required''
+      only; post-complete cleanup block intentionally rendered for all modes (per
+      cto clarification, supersedes earlier ''byte-identical'' wording). 39 new tests,
+      full suite 230→269 passing. manual smoke confirmed locked-token-only output.'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

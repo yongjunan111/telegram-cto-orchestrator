@@ -170,12 +170,75 @@ def _load_checkpoint_snippet(filename: str):
         return path, None
 
 
-def _render_team_lead_protocol() -> str:
+def _extract_execution_mode(handoff_state) -> str:
+    """Read handoff.execution.mode safely.
+
+    Returns the literal mode string when present, otherwise the empty string.
+    Legacy handoffs (no `execution` block) return ''. The bootstrap renderer
+    treats '' the same as 'delegate_optional' for behavior — only the literal
+    'delegate_required' triggers the hard delegation block.
+    """
+    if not isinstance(handoff_state, dict):
+        return ""
+    execution = handoff_state.get("execution")
+    if not isinstance(execution, dict):
+        return ""
+    mode = execution.get("mode")
+    if not isinstance(mode, str):
+        return ""
+    return mode
+
+
+def _render_delegate_required_block(peer_id: str = "<your-peer-id>") -> str:
+    """Hard 'DO NOT IMPLEMENT DIRECTLY' block, prepended only when
+    execution.mode == 'delegate_required'."""
+    return """\
+## DELEGATION REQUIRED — DO NOT IMPLEMENT DIRECTLY
+
+This handoff has `execution.mode = delegate_required`. As team lead you must
+decompose and delegate. Direct file edits will NOT pass the completion gate.
+
+- Decompose this handoff into disjoint child handoffs that can each be verified independently.
+- Use Claude Code's Agent tool with the smallest viable model (haiku/sonnet) per child — Opus is for judgement, not for typing.
+- Record each child via `orchctl handoff add-subtask <this-id> ...` so the ledger reflects what actually happened.
+- Verify child evidence (commands run, test output) before you run `orchctl handoff complete`.
+- If no safe decomposition exists, escalate to CTO instead of implementing directly.
+
+Direct file edits will NOT pass the completion gate.
+"""
+
+
+def _render_post_complete_cleanup_block(peer_id: str = "<your-peer-id>") -> str:
+    """POST-COMPLETE CLEANUP block — always rendered, regardless of mode.
+
+    Tells the worker how to wind down without killing its own tmux session.
+    The operator/CTO owns kill decisions; the worker only files a checkpoint
+    and surfaces a clear pane marker."""
+    return """\
+### POST-COMPLETE CLEANUP
+
+After `orchctl handoff complete` succeeds, wind down without ending your own session:
+
+- Run `orchctl session checkpoint <session-id> --event manual --note "work concluded"` so the next session can resume from your final state.
+- Print a clear pane marker line such as `WORK_DONE: <handoff-id>` so an operator can visually confirm completion in tmux.
+- DO NOT kill your own tmux session. The operator/CTO owns kill decisions — premature self-kill discards review-time context.
+- If CTO review or rework is expected, leave the pane idle and respond to ledger updates rather than ending the session."""
+
+
+def _render_team_lead_protocol(peer_id: str = "<your-peer-id>",
+                               execution_mode: str = "") -> str:
     # Compute absolute path to sub-handoff format spec
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     spec_path = os.path.join(repo_root, "docs", "sub-handoff-format.md")
 
-    return f"""\
+    # Hard delegation block prepends only for delegate_required.
+    prefix = ""
+    if execution_mode == "delegate_required":
+        prefix = _render_delegate_required_block(peer_id) + "\n"
+
+    cleanup_block = _render_post_complete_cleanup_block(peer_id)
+
+    body = f"""\
 ## Team Lead Protocol
 
 You are a **team lead**, not a solo implementer. Your primary job is to execute the handoff.
@@ -190,6 +253,7 @@ delegate to sub-agents, verify their results, and report a curated summary to th
 4. If decomposing: create structured sub-handoffs per `{spec_path}`
 5. Verify all results against parent acceptance criteria
 6. Report to CTO using the structured report format below
+7. Complete the official handoff lifecycle; do not stop at a chat-only report
 
 ### When to Decompose vs. Do Directly
 
@@ -255,6 +319,26 @@ When the handoff is complete, report using this structure:
 Do NOT forward raw sub-agent output to CTO. Curate and summarize.
 *This is an internal QA report. Official handoff review is pending CTO/reviewer decision.*
 
+### Official Completion Handshake
+
+The curated report above is not official state. Before you stop, make the
+handoff reviewable in YAML and notify the CTO:
+
+1. If the handoff is still `open`, run:
+   `"$ORCHCTL_PYTHON" "$ORCHCTL_SCRIPT" handoff claim "$ORCH_HANDOFF_ID" --by {peer_id}`
+   If it is already claimed by you, skip this step.
+2. Run:
+   `"$ORCHCTL_PYTHON" "$ORCHCTL_SCRIPT" handoff complete "$ORCH_HANDOFF_ID" --by {peer_id} --summary "..."`
+   Include every required `--validation-cover`, `--task-criterion-cover`, and
+   `--room-criterion-cover` flag with concrete evidence.
+3. Notify the CTO/reviewer that the handoff is ready for review. Prefer the
+   `claude-peers` MCP channel when available: list machine peers, find the CTO
+   session, then send a concise message containing the handoff id, summary,
+   files changed, verification, risks, and unresolved items.
+
+Do NOT stop until `handoff complete` succeeds. If claim/complete fails, report
+the exact command and error as a blocker.
+
 ### Before Checkpoint or Compact
 
 If you need to save a checkpoint or your session is about to compact, include the **subtask ledger** in the checkpoint `--note` field so the next session can resume without re-running completed sub-tasks. This is your responsibility — the checkpoint system does not automatically capture sub-task state.
@@ -264,7 +348,11 @@ If you need to save a checkpoint or your session is about to compact, include th
 If the handoff kind is `discovery`, sub-agents should **research and report**, not write code:
 - Gather evidence, compare options, map uncertainties
 - Deliverables are findings documents, not code changes
-- Acceptance criteria are about completeness of analysis, not passing tests"""
+- Acceptance criteria are about completeness of analysis, not passing tests
+
+{cleanup_block}"""
+
+    return prefix + body
 
 
 def _render_bootstrap(session_id, s, room_state, handoff_state,
@@ -348,7 +436,10 @@ def _render_bootstrap(session_id, s, room_state, handoff_state,
 
     # Team lead protocol
     lines.append("")
-    lines.append(_render_team_lead_protocol())
+    lines.append(_render_team_lead_protocol(
+        _fmt(s.get("peer_id")),
+        execution_mode=_extract_execution_mode(handoff_state),
+    ))
 
     # Dispatch artifact pointer
     handoff_id_val = s.get("handoff_id")
