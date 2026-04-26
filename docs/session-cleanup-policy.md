@@ -146,3 +146,21 @@ script.
 
 Each of these is intentional. Adding any of them is a V2+ scope decision
 that requires a new handoff contract.
+
+---
+
+## Operating Rule: tmux Session vs. Task Boundary
+
+tmux session is a responsibility boundary, not a task boundary. delegate_required
+child handoffs default to team-lead-internal tasklets; external tmux dispatch
+requires an explicit reason.
+
+sub-handoff는 기본적으로 새 tmux 세션이 아니다. 새 tmux 세션은 책임 단위가
+갈릴 때만 만든다.
+
+Related troubleshooting record:
+
+- `docs/issue-v2-session-archive-rework-churn.md` records why V2 session
+  archive needed a third rework round: the earlier reviews fixed symptoms, but
+  did not fully prove the report-write containment, concurrent filename
+  reservation, and CLI help invariants.

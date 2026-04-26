@@ -1,0 +1,302 @@
+handoff:
+  id: orch-v2-archive-cli
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-c-dispatch
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'Implement V2 archive CLI ORCHESTRATION in lib/session_archive.py +
+    wire ''orchctl session archive'' subparser. cmd_session_archive(args) -> int:
+    (1) call validate_archive_request from lib/session_archive_validate (Child A),
+    (2) on success call write_archive_bundle then stamp_session_archive_marker from
+    lib/session_archive_bundle (Child B), (3) print outcome to stdout + return exit
+    code (0 on archived, 1 on any other result enum), (4) on validation failure or
+    write failure, print clear stderr message naming the result enum and the specific
+    reason. CLI signature: ''orchctl session archive <session-id> --from-report <absolute-path>''.
+    --from-report is REQUIRED. Wire into orchctl by adding a subparser under existing
+    ''session'' subcommand alongside list/show/upsert/checkpoint/bootstrap.'
+  scope: 'Allowed files ONLY: lib/session_archive.py (NEW), orchctl (subparser wiring
+    + import for cmd_session_archive only — no edits to other handlers), tests/test_session_archive_cli.py
+    (NEW). Do NOT touch lib/session_archive_validate.py (Child A), lib/session_archive_bundle.py
+    (Child B), lib/handoffs.py, lib/sessions.py, lib/dispatch.py, lib/gc_audit.py,
+    lib/idle_snapshot.py, lib/session_cleanup.py, docs/, .orchestrator/, pyproject.toml.
+    Other workers active — do not revert unrelated dirty/untracked files. NOTE: orchctl
+    is shared with a paused other-handoff scope; only ADD a new subparser block, do
+    not refactor existing handlers.'
+  constraints:
+  - 'LOCKED RESULT ENUM (immutable): archived | stale_report | unsafe_to_archive |
+    report_mismatch | parse_error | already_archived. cmd_session_archive must use
+    exactly these strings in stderr error messages and as the result identifier in
+    stdout success message (''archived: <bundle-path>'').'
+  - 'LOCKED CLI SURFACE: ''orchctl session archive <session-id> --from-report <absolute-path>''.
+    --from-report is REQUIRED (argparse ''required=True'' or post-parse check). No
+    --force, --best-effort, --skip-verify, --dry-run flags in V1 of V2.'
+  - 'Exit codes: 0 only when result enum == ''archived'' AND both write_archive_bundle
+    and stamp_session_archive_marker succeed without exception. Any other result enum
+    or any uncaught exception → exit 1 (with stderr identifying the cause).'
+  - On validation failure (Child A returns non-archived enum), do NOT call Child B's
+    write functions. Validation gate is the FIRST and ONLY gate before write.
+  - On write failure (Child B raises), print the result enum context the bundle was
+    attempted under and the underlying exception class+message. Session YAML marker
+    is written ONLY after bundle write succeeded; if marker write fails AFTER bundle
+    write succeeded, surface this as a partial-success warning to stderr but still
+    exit 1 (caller can manually re-run after investigating).
+  - No cron/hook/idle-timer/background-worker invocation paths. cmd_session_archive
+    is reachable ONLY via orchctl CLI argv; no Python __main__ block, no module-level
+    side effects, no registration in any auto-trigger.
+  - 'Respect locked validation order from Child A: do not re-implement any validation
+    step in cmd_session_archive. Trust Child A''s enum + error_message exactly.'
+  - Use repo_root = absolute path of the orchctl invocation's project root (e.g. via
+    existing helper or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    from lib/session_archive.py).
+  acceptance_criteria:
+  - '''orchctl session archive'' without --from-report exits non-zero with argparse
+    usage error.'
+  - '''orchctl session archive <id> --from-report ./relative.yaml'' exits 1 with stderr
+    containing ''parse_error'' and ''absolute'' (relative path rejection routed via
+    Child A).'
+  - '''orchctl session archive <id> --from-report /abs/path/outside-repo.yaml'' exits
+    1 with stderr containing ''unsafe_to_archive''.'
+  - '''orchctl session archive wrong-id --from-report <abs-real-report>'' exits 1
+    with stderr containing ''report_mismatch''.'
+  - 'Promoted, fresh, well-formed report → exits 0, stdout ''archived: <bundle-yaml-path>'',
+    bundle yaml + md created, session YAML has archive marker.'
+  - Re-running same command on the just-archived session exits 1 with stderr containing
+    'already_archived'.
+  - at-risk / unbound / parse-error report → exits 1 with stderr 'unsafe_to_archive'
+    (verdict not promoted).
+  - Stale-report fixture (modified session YAML after report) → exits 1 with stderr
+    'stale_report'.
+  - 'Targeted tests: ''uv run pytest tests/test_session_archive_cli.py -v'' — at least
+    8 cases covering all 6 result enum exit paths + missing --from-report + happy
+    path.'
+  - 'Full suite green: ''uv run pytest tests/ -q'' — count increases by ≥8, no regressions.'
+  - 'orchctl diff is minimal: ≤25 lines added, 0 lines elsewhere modified (verified
+    by ''git diff --stat orchctl'').'
+  report_back: 'Post in CTO Telegram thread when complete: (a) test count delta, (b)
+    actual orchctl diff size in lines (target ≤25 added), (c) manual smoke command
+    + exit code, (d) any deviations from locked contract.'
+  non_goals:
+  - Re-implementing validation (Child A) or bundle writing (Child B).
+  - Adding non-archive subcommands (e.g. 'session list-archives', 'session restore')
+    — separate follow-ups.
+  - Auto-detecting reports (e.g. 'use the latest gc-audit'). --from-report is REQUIRED
+    and must be an explicit absolute path.
+  - Modifying any other lib/* module or docs/ or .orchestrator/.
+  - Adding cron/hook/idle-trigger code anywhere.
+  - Modifying parent handoff orch-v2-session-archive or running add-subtask (team
+    lead's job after this child is approved).
+  invariants:
+  - cmd_session_archive does not edit room or handoff YAML. Verified by hash equality
+    test on a real fixture room+handoff before/after invocation.
+  - cmd_session_archive does not call tmux, send-keys, kill, respawn, or any network.
+    Verified by source grep test.
+  - If --from-report is omitted, argparse exits with non-zero before any function
+    runs (no partial state).
+  - If validation fails, no bundle file and no marker is written. Verified by inspecting
+    filesystem before vs after a failed-validation test run.
+  - orchctl edits are limited to one subparser block under 'session' + one import
+    line. No refactor of existing 'session list/show/upsert/checkpoint/bootstrap'
+    handlers. Verified by diff size on orchctl (target ≤ ~25 added lines, 0 lines
+    removed elsewhere).
+  failure_examples:
+  - Re-implementing validation logic in cmd_session_archive (e.g. checking audit_verdict
+    locally) — Child A is the only owner of validation order.
+  - Calling Child B's write_archive_bundle BEFORE Child A's validate succeeds — order
+    violation, can produce bundle for at-risk session.
+  - Editing 'session list' or 'session show' handler in orchctl — scope creep into
+    stable code.
+  - Adding a --force flag that skips Child A — validation bypass.
+  - Calling tmux to capture session pane content as part of the bundle — subprocess
+    invariant violation (and bundle content comes from validated_context, not live
+    tmux).
+  validation:
+  - 'Run targeted: uv run pytest tests/test_session_archive_cli.py -v'
+  - 'Run full suite: uv run pytest tests/ -q'
+  - 'Manual smoke: a real promoted gc-audit/idle-snapshot report → ./orchctl session
+    archive <id> --from-report <abs-path> → exit 0, bundle exists, marker stamped.
+    Re-run → exit 1 already_archived.'
+execution:
+  mode: direct
+  child_handoffs: []
+timestamps:
+  created_at: '2026-04-25T08:55:15Z'
+  claimed_at: '2026-04-26T04:39:24Z'
+  completed_at: '2026-04-26T04:40:12Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: 'Run targeted: uv run pytest tests/test_session_archive_cli.py
+      -v'
+    evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+      (Agent sonnet) per CTO-authorized operating model correction (tmux session =
+      responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+      + orchctl subparser delivered via parent ledger; integration smoke green (run
+      1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+      findings tracked in orch-v2-session-archive-rework-1.
+  - validation_index: 2
+    validation_text: 'Run full suite: uv run pytest tests/ -q'
+    evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+      (Agent sonnet) per CTO-authorized operating model correction (tmux session =
+      responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+      + orchctl subparser delivered via parent ledger; integration smoke green (run
+      1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+      findings tracked in orch-v2-session-archive-rework-1.
+  - validation_index: 3
+    validation_text: 'Manual smoke: a real promoted gc-audit/idle-snapshot report
+      → ./orchctl session archive <id> --from-report <abs-path> → exit 0, bundle exists,
+      marker stamped. Re-run → exit 1 already_archived.'
+    evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+      (Agent sonnet) per CTO-authorized operating model correction (tmux session =
+      responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+      + orchctl subparser delivered via parent ledger; integration smoke green (run
+      1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+      findings tracked in orch-v2-session-archive-rework-1.
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: '''orchctl session archive'' without --from-report exits non-zero
+        with argparse usage error.'
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 2
+      criterion_text: '''orchctl session archive <id> --from-report ./relative.yaml''
+        exits 1 with stderr containing ''parse_error'' and ''absolute'' (relative
+        path rejection routed via Child A).'
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 3
+      criterion_text: '''orchctl session archive <id> --from-report /abs/path/outside-repo.yaml''
+        exits 1 with stderr containing ''unsafe_to_archive''.'
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 4
+      criterion_text: '''orchctl session archive wrong-id --from-report <abs-real-report>''
+        exits 1 with stderr containing ''report_mismatch''.'
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 5
+      criterion_text: 'Promoted, fresh, well-formed report → exits 0, stdout ''archived:
+        <bundle-yaml-path>'', bundle yaml + md created, session YAML has archive marker.'
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 6
+      criterion_text: Re-running same command on the just-archived session exits 1
+        with stderr containing 'already_archived'.
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 7
+      criterion_text: at-risk / unbound / parse-error report → exits 1 with stderr
+        'unsafe_to_archive' (verdict not promoted).
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 8
+      criterion_text: Stale-report fixture (modified session YAML after report) →
+        exits 1 with stderr 'stale_report'.
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 9
+      criterion_text: 'Targeted tests: ''uv run pytest tests/test_session_archive_cli.py
+        -v'' — at least 8 cases covering all 6 result enum exit paths + missing --from-report
+        + happy path.'
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 10
+      criterion_text: 'Full suite green: ''uv run pytest tests/ -q'' — count increases
+        by ≥8, no regressions.'
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    - criterion_index: 11
+      criterion_text: 'orchctl diff is minimal: ≤25 lines added, 0 lines elsewhere
+        modified (verified by ''git diff --stat orchctl'').'
+      evidence: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet
+        (Agent sonnet) per CTO-authorized operating model correction (tmux session
+        = responsibility boundary, not task boundary). lib/session_archive.py + tests/test_session_archive_cli.py
+        + orchctl subparser delivered via parent ledger; integration smoke green (run
+        1 archived a real session, run 2 returned already_archived). Re-opened operational/coverage
+        findings tracked in orch-v2-session-archive-rework-1.
+    room: []
+  completed_by: orch-worker-c-dispatch
+  summary: Closing as absorbed-by-parent. CLI implementation (lib/session_archive.py,
+    tests/test_session_archive_cli.py, orchctl 9-line subparser) was delivered via
+    parent team-lead internal tasklet using Agent(sonnet) per CTO-authorized operating
+    model correction. Parent execution.child_handoffs ledger already records this
+    absorption with full evidence. Closing this child YAML for ledger-vs-state honesty
+    (per code-review P2 finding). Operational gaps (P1 producer, P2 bundle null shell,
+    etc.) tracked separately in orch-v2-session-archive-rework-1.
+  files_changed:
+  - lib/session_archive.py (NEW; team-lead internal tasklet)
+  - tests/test_session_archive_cli.py (NEW; team-lead internal tasklet; 9 tests)
+  - orchctl (EDIT; +9 lines, 0 deletions; team-lead internal tasklet)
+  verification:
+  - Parent integration smoke run 1 archived orch-worker-a-founda-orch-delegation-gate-schema
+    -> exit 0
+  - 'Parent integration smoke run 2 (rerun): exit 1, stderr already_archived'
+  - tests/test_session_archive_cli.py 9/9 PASS at parent close; full suite 317/317
+    PASS
+  risks:
+  - P1 producer not yet built; tracked in orch-v2-session-archive-rework-1
+  - P2 bundle null shell on real CLI path; tracked in orch-v2-session-archive-rework-1
+  - P2 timestamp collision risk (second precision); tracked in orch-v2-session-archive-rework-1
+  - P2 stamp-time CAS missing; tracked in orch-v2-session-archive-rework-1
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T04:40:18Z'
+  note: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet recovery
+    per CTO-authorized operating model correction. Closing review to clear stale ledger-vs-state
+    mismatch (code-review P2 finding). Re-opened operational gaps tracked in orch-v2-session-archive-rework-1.
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - absorbed by parent (orch-v2-session-archive) team-lead internal tasklet recovery
+      per cto-authorized operating model correction. closing review to clear stale
+      ledger-vs-state mismatch (code-review p2 finding). re-opened operational gaps
+      tracked in orch-v2-session-archive-rework-1.
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

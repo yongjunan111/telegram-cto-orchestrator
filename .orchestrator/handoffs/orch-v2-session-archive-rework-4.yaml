@@ -1,0 +1,358 @@
+handoff:
+  id: orch-v2-session-archive-rework-4
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'V2 archive rework-4. Close 2 P2 invariants from Codex post-rework-3
+    review. YOU ARE TEAM LEAD = same responsibility boundary as rework-1/2/3, reuse
+    same pane. 1 internal Agent(sonnet) tasklet recommended (single coherent change),
+    NO new external child YAML. **Finding 1: containment scope.** lib/session_archive_report.py:_check_no_symlink_in_chain
+    currently walks from / down to target — rejects legitimate workspaces where repo
+    is under symlinked ancestor (macOS /var, etc.). Must scope check to repo_root
+    or .orchestrator boundary downward. Symlinks ABOVE the boundary are not our concern.
+    **Finding 2: TOCTOU placeholder gap.** _reserve_unique_target does (a) symlink
+    precheck, (b) os.makedirs, (c) os.open(O_CREAT|O_EXCL) writing 0-byte placeholder,
+    (d) safe_write_text containment + os.replace. Between (a) and (b)/(c), parent
+    can be swapped to symlink → 0-byte placeholder lands outside repo. Codex confirmed
+    via simulation. Fix: separate name candidate selection from file creation; file
+    creation MUST happen inside verified .orchestrator boundary with exclusive CONTENT
+    write (not 0-byte placeholder + later replace). Consider dirfd/openat/O_NOFOLLOW
+    or equivalent realpath revalidation immediately before write. Optionally add a
+    small storage.py exclusive-writer helper. NO monkeypatch-only fixes.'
+  scope: 'ALLOWED: lib/session_archive_report.py, tests/test_session_archive_report.py,
+    optional lib/storage.py + tests/test_storage.py (if you add a small safe-exclusive-write
+    helper). FORBIDDEN: orchctl (helps already correct), lib/session_archive.py, lib/session_archive_bundle.py,
+    lib/session_archive_validate.py, lib/handoffs.py, lib/bootstrap.py, lib/session_cleanup.py,
+    .orchestrator/wiki/**, .orchestrator/handoffs/**, .orchestrator/rooms/**.'
+  constraints:
+  - Tiny scope. NO V3 features. NO idle/cron/hooks/cleanup automation. NO --force/--best-effort/--skip-verify.
+    NO direct wiki write. NO new operator-facing flags. NO adversarial-review gate
+    / invariant schema / verifier peer (those are deferred separate proposals).
+  - NO new external child handoff YAML. 1 internal Agent(sonnet) tasklet, recorded
+    via add-subtask.
+  - delegate_required gate enforced.
+  - 'Trust-but-verify: targeted pytest BEFORE add-subtask. Race regression test must
+    actually exercise the ''precheck pass, then containment re-check fails'' path
+    — not just check the precheck.'
+  - CTO will run adversarial pre-review (oh-my-claudecode:code-reviewer) BEFORE approve.
+    Closing must be defensible against 'what scenario does this NOT protect' question.
+  acceptance_criteria:
+  - 'INVARIANT: archive-report produces ZERO files of any kind (data, marker, 0-byte
+    placeholder, temp) outside the verified .orchestrator boundary, regardless of
+    TOCTOU symlink swaps between containment check and write. Test: simulate parent-becomes-symlink
+    between precheck and write (helper-level if process-level race infeasible) and
+    assert outside dir remains empty.'
+  - 'INVARIANT: archive-report SUCCEEDS when the repository is rooted under a symlinked
+    ancestor (e.g., repo at /Users/x/proj where /var is a symlink, or any other above-repo
+    symlink). Symlinks above repo_root are out of scope and must not cause false rejection.
+    Test: place repo (or fake repo) at a path containing a symlinked ancestor; archive-report
+    exits 0 and writes correctly.'
+  - 'INVARIANT: symlink components AT or BELOW the .orchestrator chain (runtime/,
+    session-archive-reports/, <sid>/) are still refused with no write. Test: pre-plant
+    symlink at .orchestrator/runtime → outside; producer exits 1, outside dir empty
+    (preserved from rework-3).'
+  - 'INVARIANT: atomic reservation preserved — no producer overwrites another''s report.
+    Existing rework-3 tests for collision suffix and pre-planted file skip remain
+    green.'
+  - 'INVARIANT: V2 archive-report → archive CLI contract unchanged. Locked result
+    enum, --from-report absolute requirement, archive bundle path shape all unchanged.
+    (Smoke: producer → archive on a real session still works.)'
+  - 'Targeted pytest green: ''uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -q'' (and tests/test_storage.py if storage touched).'
+  - 'Full pytest green: ''uv run pytest tests/ -q'' (>=345, no regressions).'
+  - Parent execution.child_handoffs has >=1 completed entry with real owned_files
+    matching diff. NO new external child YAML.
+  report_back: 'Telegram chat 8585947943 reply_to 4502: (1) handoff id/status; (2)
+    internal tasklet ledger; (3) exact files changed (git status); (4) core design
+    (how Finding 1 + Finding 2 are closed — 2-3 sentences each); (5) per-invariant
+    closure Y/N + key test name; (6) targeted + full pytest results; (7) residual
+    risk (anything you noticed but didn''t fix).'
+  non_goals:
+  - V3 idle/cron/hooks/cleanup automation. Defer.
+  - Adversarial-review approval gate (deferred separate proposal).
+  - Invariant/example schema separation (deferred separate proposal).
+  - Verifier peer separation (deferred separate proposal).
+  - F1 (gc-audit/idle-snapshot help cross-reference) and F2 (orchctl main() exit-code
+    audit) — separate follow-ups, not this handoff.
+  - New external child handoff YAML.
+  - Touching unrelated archive modules (validate, bundle, cli orchestration). orchctl
+    help is already correct.
+  invariants:
+  - Locked result enum + locked CLI surface unchanged.
+  - 'Archive bundle/report path shapes unchanged: .orchestrator/runtime/session-archive-reports/<sid>/<ts>[-N].yaml.'
+  - No subprocess/tmux/network/wiki write inside lib/session_archive_report.py.
+  - If storage.py touched, blast radius stays small (single new helper or single function
+    modification with full storage tests still green).
+  failure_examples: []
+  validation:
+  - uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -v after tasklet.
+  - uv run pytest tests/ -q (full).
+  - 'Symlink-above-repo regression: simulate repo under symlink ancestor (e.g., create
+    /tmp/symlinked-parent → real dir, init fake repo at /tmp/symlinked-parent/repo,
+    run producer); must exit 0.'
+  - 'TOCTOU race regression: helper-level test that exercises ''precheck passes then
+    write rejects via final containment''; outside dir empty.'
+  - Locked .orchestrator/runtime symlink test still passes (preserve rework-3 invariant).
+  - Real producer smoke on an unarchived session must still work (exit 0 + abs path
+    emitted under .orchestrator/runtime/session-archive-reports/<sid>/).
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-v2-archive-rework4-tasklet
+    model_target: sonnet
+    owned_files:
+    - lib/session_archive_report.py
+    - tests/test_session_archive_report.py
+    status: completed
+    evidence: 'Two P2 invariants from Codex review closed via single dirfd-based primitive.
+      lib/session_archive_report.py: REMOVED _check_no_symlink_in_chain (TOCTOU-vulnerable
+      + scope-too-broad walked from /), _orchestrator_dir, _reports_root_dir, _reserve_unique_target
+      (placeholder-based check-then-write race). REMOVED safe_write_text call from
+      producer write path (replaced with stronger primitive — safe_write_text itself
+      untouched, contract preserved). ADDED _open_or_create_dir_nofollow(parent_fd,
+      name) using openat O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC + mkdirat on ENOENT; ELOOP
+      propagates atomically. ADDED _write_archive_report_atomic(repo_root, session_id,
+      timestamp, content) opens .orchestrator (operator trust boundary; symlinks ABOVE
+      not our concern), then descends through runtime/, session-archive-reports/,
+      <sid>/ via _open_or_create_dir_nofollow with O_NOFOLLOW on every step; final
+      file via os.open with O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW|O_CLOEXEC + dir_fd=session_dir_fd
+      writing content directly + os.fsync (no placeholder, no separate replace). FileExistsError
+      retries with -1, -2, ... up to 10000 attempts. cmd_session_archive_report calls
+      _write_archive_report_atomic. F1 fix: scope is .orchestrator boundary downward
+      only — repo can be at /var/folders/.../tmp on macOS (where /var is a symlink
+      to /private/var); the dirfd walk starts at .orchestrator unconditionally, so
+      above-repo symlinks no longer cause false rejection. F2 fix: once we hold an
+      fd to a directory inode, the path string can be swapped to a symlink concurrently
+      — all subsequent openat(dir_fd=fd, ...) operations land in the original inode,
+      not the symlink target. Combined with O_NOFOLLOW on each step, no TOCTOU window
+      exists. tests/test_session_archive_report.py: +3 tests (test_archive_report_succeeds_under_symlinked_ancestor
+      F1A — repo under sym-root/repo path with /sym-root -> /real-root symlink, producer
+      succeeds; test_dirfd_write_is_immune_to_post_open_path_swap F2A — helper-level
+      race regression: open dirfd to real dir, attacker renames real dir aside + symlinks
+      original path to outside-escape, write through fd lands in original inode, outside
+      dir empty; test_symlink_at_runtime_inside_orchestrator_is_refused F2B — preserved
+      invariant: pre-plant runtime/ -> outside, producer exit 1, no escape). Targeted
+      pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+      -q: 35 passed (was 32, +3). Full pytest tests/ -q: 348 passed (was 345, +3,
+      0 regressions). Smoke: orchctl session archive-report orch-worker-a-founda-orch-foundation-fixes
+      -> /home/dydwn/projects/telegram-cto-orchestrator/.orchestrator/runtime/session-archive-reports/<sid>/2026-04-26T07:29:22Z.yaml
+      exit 0. Both rework-2/3 help surfaces preserved (orchctl session --help: V2
+      archive-report wording on archive line; orchctl session archive --help: rework-2
+      --from-report wording).'
+timestamps:
+  created_at: '2026-04-26T07:22:32Z'
+  claimed_at: '2026-04-26T07:30:40Z'
+  completed_at: '2026-04-26T07:30:40Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+      -v after tasklet.
+    evidence: Targeted pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+      -v after tasklet -> 35 passed including 3 new tests covering F1 scope, F2 dirfd-immune-to-swap,
+      F2B runtime-symlink-refused
+  - validation_index: 2
+    validation_text: uv run pytest tests/ -q (full).
+    evidence: Full pytest tests/ -q -> 348 passed (no regression vs rework-3 baseline
+      345; +3 net for 3 new tests)
+  - validation_index: 3
+    validation_text: 'Symlink-above-repo regression: simulate repo under symlink ancestor
+      (e.g., create /tmp/symlinked-parent → real dir, init fake repo at /tmp/symlinked-parent/repo,
+      run producer); must exit 0.'
+    evidence: 'Symlink-above-repo regression: test_archive_report_succeeds_under_symlinked_ancestor
+      pre-creates /tmp/<test>/sym-root -> /tmp/<test>/real-root, runs producer with
+      apparent_repo at /tmp/<test>/sym-root/repo (path contains a symlinked ancestor);
+      cmd_session_archive_report exit 0 + abs path emitted + V2 contract content verified'
+  - validation_index: 4
+    validation_text: 'TOCTOU race regression: helper-level test that exercises ''precheck
+      passes then write rejects via final containment''; outside dir empty.'
+    evidence: 'TOCTOU race regression: test_dirfd_write_is_immune_to_post_open_path_swap
+      acquires fd to real dir; attacker renames real dir aside + symlinks original
+      path to outside-escape; write through fd lands in original inode (where fd points)
+      NOT in symlink target; outside dir os.listdir == [] (zero escape; precheck-then-swap
+      attack defeated). Helper-level test exercises the actual race window.'
+  - validation_index: 5
+    validation_text: Locked .orchestrator/runtime symlink test still passes (preserve
+      rework-3 invariant).
+    evidence: 'Locked .orchestrator/runtime symlink test: test_symlink_at_runtime_inside_orchestrator_is_refused
+      pre-plants runtime/ -> outside-escape, producer exit 1, outside dir empty. Existing
+      rework-3 tests (test_symlink_above_reports_root_is_refused at session-archive-reports
+      level + test_symlink_in_parent_chain_before_session_dir_is_refused at <sid>
+      level) also still green.'
+  - validation_index: 6
+    validation_text: Real producer smoke on an unarchived session must still work
+      (exit 0 + abs path emitted under .orchestrator/runtime/session-archive-reports/<sid>/).
+    evidence: 'Real producer smoke: orchctl session archive-report orch-worker-a-founda-orch-foundation-fixes
+      -> exit 0 + /home/dydwn/projects/telegram-cto-orchestrator/.orchestrator/runtime/session-archive-reports/orch-worker-a-founda-orch-foundation-fixes/2026-04-26T07:29:22Z.yaml.
+      V2 contract preserved, path shape unchanged.'
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'INVARIANT: archive-report produces ZERO files of any kind (data,
+        marker, 0-byte placeholder, temp) outside the verified .orchestrator boundary,
+        regardless of TOCTOU symlink swaps between containment check and write. Test:
+        simulate parent-becomes-symlink between precheck and write (helper-level if
+        process-level race infeasible) and assert outside dir remains empty.'
+      evidence: 'INVARIANT 1 CLOSED. dirfd traversal holds inode references; post-acquire
+        path swaps cannot redirect writes. test_dirfd_write_is_immune_to_post_open_path_swap
+        demonstrates: outside dir remains empty even when attacker swaps parent path
+        to symlink AFTER fd acquired. Combined with O_NOFOLLOW on every openat step,
+        the precheck-then-swap-then-write attack window does not exist — refusals
+        are atomic at the syscall level.'
+    - criterion_index: 2
+      criterion_text: 'INVARIANT: archive-report SUCCEEDS when the repository is rooted
+        under a symlinked ancestor (e.g., repo at /Users/x/proj where /var is a symlink,
+        or any other above-repo symlink). Symlinks above repo_root are out of scope
+        and must not cause false rejection. Test: place repo (or fake repo) at a path
+        containing a symlinked ancestor; archive-report exits 0 and writes correctly.'
+      evidence: INVARIANT 2 CLOSED (F1). Producer succeeds when repo is rooted under
+        a symlinked ancestor. test_archive_report_succeeds_under_symlinked_ancestor
+        places repo at /tmp/<t>/sym-root/repo where sym-root is a real symlink to
+        /tmp/<t>/real-root; producer exits 0 + emits abs path + V2 content valid.
+        _write_archive_report_atomic opens .orchestrator unconditionally (operator
+        trust boundary), applying O_NOFOLLOW only on descent steps below it.
+    - criterion_index: 3
+      criterion_text: 'INVARIANT: symlink components AT or BELOW the .orchestrator
+        chain (runtime/, session-archive-reports/, <sid>/) are still refused with
+        no write. Test: pre-plant symlink at .orchestrator/runtime → outside; producer
+        exits 1, outside dir empty (preserved from rework-3).'
+      evidence: INVARIANT 3 CLOSED (preserved from rework-3). Symlinks AT or BELOW
+        .orchestrator chain refused atomically via O_NOFOLLOW. test_symlink_at_runtime_inside_orchestrator_is_refused
+        (new), test_symlink_above_reports_root_is_refused (rework-3, still green),
+        test_symlink_in_parent_chain_before_session_dir_is_refused (rework-2, still
+        green). All three levels of the chain (runtime/session-archive-reports/<sid>)
+        refused individually with no escape.
+    - criterion_index: 4
+      criterion_text: 'INVARIANT: atomic reservation preserved — no producer overwrites
+        another''s report. Existing rework-3 tests for collision suffix and pre-planted
+        file skip remain green.'
+      evidence: INVARIANT 4 CLOSED. Atomic reservation preserved. _write_archive_report_atomic
+        uses O_CREAT|O_EXCL|O_WRONLY with dir_fd; FileExistsError retries with -1,
+        -2, ... suffix. test_atomic_reservation_does_not_overwrite_concurrent_producer_file
+        (rework-3, green) + test_atomic_reservation_skips_multiple_existing_paths
+        (rework-3, green) prove pre-planted files at first or first+second candidate
+        paths are never overwritten.
+    - criterion_index: 5
+      criterion_text: 'INVARIANT: V2 archive-report → archive CLI contract unchanged.
+        Locked result enum, --from-report absolute requirement, archive bundle path
+        shape all unchanged. (Smoke: producer → archive on a real session still works.)'
+      evidence: INVARIANT 5 CLOSED. V2 archive-report -> archive CLI contract unchanged.
+        Locked result enum unchanged (validate module untouched). --from-report absolute
+        requirement unchanged (rework-2 wording unchanged). Archive bundle path shape
+        unchanged (.orchestrator/runtime/session-archives/<sid>/<ts>.yaml). Archive-report
+        path shape unchanged (.orchestrator/runtime/session-archive-reports/<sid>/<ts>[-N].yaml).
+        Smoke proves real session_id -> real bundle still works post-refactor.
+    - criterion_index: 6
+      criterion_text: 'Targeted pytest green: ''uv run pytest tests/test_session_archive_report.py
+        tests/test_session_archive_cli.py -q'' (and tests/test_storage.py if storage
+        touched).'
+      evidence: INVARIANT 6 CLOSED. Targeted pytest tests/test_session_archive_report.py
+        tests/test_session_archive_cli.py -q -> 35 passed (was 32, +3 new tests for
+        new invariants).
+    - criterion_index: 7
+      criterion_text: 'Full pytest green: ''uv run pytest tests/ -q'' (>=345, no regressions).'
+      evidence: INVARIANT 7 CLOSED. Full pytest tests/ -q -> 348 passed (was 345 from
+        rework-3, +3 new tests, 0 regressions in 345 baseline).
+    - criterion_index: 8
+      criterion_text: Parent execution.child_handoffs has >=1 completed entry with
+        real owned_files matching diff. NO new external child YAML.
+      evidence: 'INVARIANT 8 CLOSED. execution.child_handoffs has 1 completed entry:
+        orch-v2-archive-rework4-tasklet (sonnet, 2 owned files matching diff: lib/session_archive_report.py,
+        tests/test_session_archive_report.py). delegate_required gate satisfied. NO
+        new external child handoff YAML created (ls .orchestrator/handoffs/ unchanged
+        from rework-3 state).'
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: 'Rework-4 closes 2 P2 invariants from Codex post-rework-3 review via single
+    dirfd+O_NOFOLLOW primitive. Replaces precheck-then-makedirs-then-O_EXCL-placeholder
+    pattern (TOCTOU-vulnerable + scope-too-broad chain check) with dirfd traversal
+    from .orchestrator downward; final write via O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW
+    with dir_fd writing content directly. F1: scope is .orchestrator boundary downward
+    only — repo under symlinked ancestor (e.g., macOS /var) succeeds. F2: once dirfd
+    to a directory inode is held, post-acquire path swap on disk is irrelevant; subsequent
+    openat lands in original inode regardless of swap. safe_write_text contract NOT
+    modified; bypassed for producer''s write path because dirfd primitive is strictly
+    stronger. lib/session_archive_report.py refactored: 4 helpers removed, 2 added;
+    cmd_session_archive_report write block replaced with single _write_archive_report_atomic
+    call. tests/test_session_archive_report.py: +3 tests (F1A symlinked-ancestor success,
+    F2A dirfd-immune-to-path-swap helper-level regression, F2B runtime-symlink-inside-orchestrator-refused).
+    Targeted 35 passed (32->35), full 348 passed (345->348, 0 regressions). Smoke
+    green. Both help surfaces from rework-2/3 preserved. NO new external child handoff
+    YAML created.'
+  files_changed:
+  - 'lib/session_archive_report.py (MODIFY: removed _check_no_symlink_in_chain + _orchestrator_dir
+    + _reports_root_dir + _reserve_unique_target; added _open_or_create_dir_nofollow
+    + _write_archive_report_atomic; cmd_session_archive_report now uses dirfd primitive
+    instead of safe_write_text)'
+  - 'tests/test_session_archive_report.py (MODIFY: +3 invariant tests for F1A scope,
+    F2A dirfd-immune-to-path-swap, F2B runtime-symlink-refused)'
+  verification:
+  - uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -q -> 35 passed (was 32, +3 new)
+  - uv run pytest tests/ -q -> 348 passed (was 345 baseline from rework-3, +3, 0 regressions
+    in 345 baseline)
+  - 'Smoke: orchctl session archive-report orch-worker-a-founda-orch-foundation-fixes
+    -> /home/dydwn/projects/telegram-cto-orchestrator/.orchestrator/runtime/session-archive-reports/<sid>/2026-04-26T07:29:22Z.yaml
+    exit 0; producer functional after refactor; V2 contract path shape unchanged'
+  - 'Both help surfaces preserved from rework-2/3: orchctl session --help shows ''archive:
+    V2 archive-report YAML (see session archive-report)''; orchctl session archive
+    --help shows ''--from-report: V2 archive-report YAML produced by orchctl session
+    archive-report''. Neither surface modified by this rework, preserved by design
+    (orchctl forbidden in scope).'
+  - 'Code inspection confirmed: removed helpers grep returns no matches; new helpers
+    grep returns 2 (definitions) + 2 (callers); safe_write_text grep returns 0 in
+    executable code; storage import kept with noqa for back-compat (no functional
+    use)'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T07:35:25Z'
+  note: 'Both P2 invariants HOLD per adversarial pre-review (oh-my-claudecode:code-reviewer,
+    independent). dirfd + O_NOFOLLOW design is the correct primitive: openat(dir_fd=...)
+    resolves by inode not path-string, defeating TOCTOU by kernel guarantee. F1 (above-repo
+    symlink success): scope correctly restricted to .orchestrator boundary downward;
+    test_archive_report_succeeds_under_symlinked_ancestor uses real symlinked path
+    (not realpath). F2 (TOCTOU placeholder gap): test_dirfd_write_is_immune_to_post_open_path_swap
+    is a kernel-level primitive proof — opens dir fd, swaps path to outside-pointing
+    symlink, writes via dir_fd, lands in original inode. No placeholder file ever
+    created (content written directly through O_EXCL+O_NOFOLLOW fd). Independent verification:
+    handoff status=completed, 1 internal tasklet (sonnet, 2 owned files), pytest 35
+    targeted + 348 full, NO new external child YAML. Self-critique applied: ran adversarial
+    pre-review BEFORE approve. Acceptance criteria written as INVARIANTS not examples.
+    Follow-up polish (NOT blockers, NFS/FUSE edge cases): MED1 fd leak if os.close
+    fails on old dir_fd between descent steps, MED2 no parent dir fsync (crash durability
+    — consistent with safe_write_text behavior), LOW orphan partial write on mid-write
+    OSError, LOW dead ''import storage'' line, LOW helper definition order. None affect
+    correctness or security under normal operation.'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'both p2 invariants hold per adversarial pre-review (oh-my-claudecode:code-reviewer,
+      independent). dirfd + o_nofollow design is the correct primitive: openat(dir_fd=...)
+      resolves by inode not path-string, defeating toctou by kernel guarantee. f1
+      (above-repo symlink success): scope correctly restricted to .orchestrator boundary
+      downward; test_archive_report_succeeds_under_symlinked_ancestor uses real symlinked
+      path (not realpath). f2 (toctou placeholder gap): test_dirfd_write_is_immune_to_post_open_path_swap
+      is a kernel-level primitive proof — opens dir fd, swaps path to outside-pointing
+      symlink, writes via dir_fd, lands in original inode. no placeholder file ever
+      created (content written directly through o_excl+o_nofollow fd). independent
+      verification: handoff status=completed, 1 internal tasklet (sonnet, 2 owned
+      files), pytest 35 targeted + 348 full, no new external child yaml. self-critique
+      applied: ran adversarial pre-review before approve. acceptance criteria written
+      as invariants not examples. follow-up polish (not blockers, nfs/fuse edge cases):
+      med1 fd leak if os.close fails on old dir_fd between descent steps, med2 no
+      parent dir fsync (crash durability — consistent with safe_write_text behavior),
+      low orphan partial write on mid-write oserror, low dead ''import storage'' line,
+      low helper definition order. none affect correctness or security under normal
+      operation.'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

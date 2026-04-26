@@ -1,0 +1,246 @@
+handoff:
+  id: orch-v2-archive-validate
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-a-foundation
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'Implement V2 session archive REQUEST VALIDATION + REVALIDATION as
+    pure functions in lib/session_archive_validate.py. No CLI, no bundle writing,
+    no marker writing — just validation logic that other modules consume. Function
+    signature: validate_archive_request(session_id: str, report_path: str, repo_root:
+    str) -> Tuple[Optional[Dict], str, Optional[str]] returning (validated_context,
+    result_enum, error_message). Locked validation order: (1) relative report_path
+    → ''parse_error''; (2) outside-repo or symlink escape → ''unsafe_to_archive'';
+    (3) session_id arg != report''s session_id → ''report_mismatch''; (4) unsafe slug
+    ref (room_id/handoff_id/session_id non-slug-safe) → ''parse_error''; (5) report.audit_verdict
+    != ''promoted'' → ''unsafe_to_archive''; (6) session YAML already has archive.status=''archived''
+    → ''already_archived''; (7) session/handoff/room YAML SHA-256 hash differs from
+    values recorded in report → ''stale_report''; (8) git HEAD or worktree dirty-state
+    differs from report → ''stale_report''. On success: return (full_context_dict,
+    ''archived'', None). validated_context dict must contain parsed report, session/room/handoff
+    state snapshots, git info, normalized realpath of report_path.'
+  scope: 'Allowed files ONLY: lib/session_archive_validate.py (NEW), tests/test_session_archive_validate.py
+    (NEW). Do NOT touch orchctl, lib/session_archive.py, lib/session_archive_bundle.py,
+    lib/handoffs.py, lib/sessions.py, lib/gc_audit.py, lib/idle_snapshot.py, docs/,
+    .orchestrator/, pyproject.toml. Other workers are active — do not revert unrelated
+    dirty/untracked files.'
+  constraints:
+  - 'LOCKED RESULT ENUM (immutable across V2): archived | stale_report | unsafe_to_archive
+    | report_mismatch | parse_error | already_archived. Use these exact strings, no
+    synonyms.'
+  - Validation function MUST return early on first failure, in the documented order.
+    Do not aggregate errors — single result enum + single error_message.
+  - 'Pure function: no file writes, no subprocess except ''git rev-parse HEAD'' /
+    ''git status --porcelain'' for revalidation reads (no ''git commit'', ''git push'',
+    ''git fetch''). No tmux. No stdout side-effects.'
+  - 'Use existing helpers: validators.is_slug_safe / validate_slug for ref checks;
+    lib.storage helpers for safe path containment if available; otherwise os.path.realpath
+    + repo_root prefix check.'
+  - 'Report parsing: use yaml.safe_load. If yaml parse fails, return (''parse_error'',
+    ''report yaml could not be parsed''). Required keys in report: session_id, audit_verdict,
+    snapshots.session_yaml_sha256, snapshots.handoff_yaml_sha256, snapshots.room_yaml_sha256,
+    git.head_sha, git.worktree_dirty. Missing required key → ''parse_error''. Unknown
+    keys are OK (forward compat).'
+  - 'Session/handoff/room YAML re-hash uses identical bytes-on-disk SHA-256 as report
+    recorded. Mismatch → ''stale_report''. (Note: it is acceptable for V2 to require
+    that the report writer recorded these hashes; if existing gc-audit reports lack
+    these fields, treat that as ''parse_error'' for now and document the contract
+    — DO NOT modify gc_audit.py from this handoff.)'
+  - 'git revalidation: report records git.head_sha and git.worktree_dirty. Re-read
+    with ''git rev-parse HEAD'' and ''git status --porcelain'' (empty=clean). If head_sha
+    drifted OR if worktree was clean in report but is now dirty (or vice versa), return
+    ''stale_report''. Subprocess calls must use a 5s timeout and reject non-zero exit.'
+  - 'All path comparisons use os.path.realpath. Repo containment check: realpath(report_path)
+    must be inside realpath(repo_root). Otherwise ''unsafe_to_archive''.'
+  acceptance_criteria:
+  - validate_archive_request returns ('parse_error', ...) for relative report_path.
+  - validate_archive_request returns ('unsafe_to_archive', ...) for report_path outside
+    repo_root or via symlink escape (test creates a symlink pointing outside repo
+    and asserts rejection).
+  - validate_archive_request returns ('report_mismatch', ...) when session-id arg
+    != report's session_id.
+  - validate_archive_request returns ('parse_error', ...) when room_id/handoff_id/session_id
+    contains path traversal or other unsafe characters.
+  - validate_archive_request returns ('unsafe_to_archive', ...) when report.audit_verdict
+    in (at-risk, unbound, parse-error).
+  - validate_archive_request returns ('already_archived', ...) when session YAML has
+    archive.status='archived'.
+  - validate_archive_request returns ('stale_report', ...) when current YAML hash
+    differs from report's recorded hash.
+  - validate_archive_request returns ('stale_report', ...) when git HEAD or worktree
+    dirty-state changed since report.
+  - validate_archive_request returns ('archived', None) on a fully-promoted, fresh,
+    well-formed report; validated_context dict contains all expected keys.
+  - 'Targeted tests: ''uv run pytest tests/test_session_archive_validate.py -v'' —
+    at least 12 cases (one per result enum value + edge cases for each validation
+    step).'
+  - 'Full suite green: ''uv run pytest tests/ -q'' — count increases by ≥12, no regressions.'
+  report_back: 'Post in CTO Telegram thread when complete: (a) test count delta (before/after),
+    (b) confirm all 6 result enum values exercised by tests, (c) cite the symlink-escape
+    test name, (d) any deviations from locked contract.'
+  non_goals:
+  - Writing the archive bundle (Child B owns lib/session_archive_bundle.py).
+  - Writing the session YAML archive marker (Child B owns).
+  - CLI wiring (Child C owns orchctl + lib/session_archive.py orchestration).
+  - Modifying lib/gc_audit.py to add the snapshot fields the report needs (separate
+    follow-up; for V2 V1, treat missing snapshots as parse_error).
+  - tmux/cron/idle-trigger/wiki-write — V3 work or out-of-scope entirely.
+  invariants:
+  - No file writes from this module. Verified by tests scanning module source for
+    open('w'), os.write, safe_write_text, atomic_write, etc.
+  - No tmux, no send-keys, no kill, no respawn. Verified by source grep test.
+  - Cannot be invoked from cron/hook/idle-timer code paths because the module exposes
+    only pure functions; no entry-point script. Verified by absence of __main__ block
+    and absence of registration in any cron/hook config.
+  - Function never raises uncaught exceptions; all error paths return result enum.
+    (Tests must include malformed YAML, missing keys, OS errors on report file, etc.)
+  failure_examples:
+  - Function silently passes when audit_verdict is 'at-risk' — gate not enforced.
+  - Symlinked report_path pointing to /etc/shadow is accepted — repo containment broken.
+  - Function writes to disk (e.g. logs the validation outcome to a file) — pure invariant
+    broken.
+  - Function returns a result enum value not in the locked set (e.g. 'failed', 'invalid',
+    'rejected').
+  - Editing orchctl or lib/session_archive_bundle.py from this handoff — scope violation.
+  validation:
+  - 'Run targeted: uv run pytest tests/test_session_archive_validate.py -v'
+  - 'Run full suite: uv run pytest tests/ -q (verify count >= prior_count + 12 and
+    zero failures)'
+  - 'Source grep: ''grep -nE "open\(.*[''\""]w|os\.write|safe_write_text|atomic_write|subprocess\.(Popen|run|call|check)|tmux"
+    lib/session_archive_validate.py'' — should match only the allowed git read invocations
+    and nothing else.'
+execution:
+  mode: direct
+  child_handoffs: []
+timestamps:
+  created_at: '2026-04-25T08:53:33Z'
+  claimed_at: '2026-04-25T09:03:34Z'
+  completed_at: '2026-04-25T09:04:10Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: 'Run targeted: uv run pytest tests/test_session_archive_validate.py
+      -v'
+    evidence: tests/test_session_archive_validate.py 24 collected, 24 passed (.venv/bin/python
+      -m pytest tests/test_session_archive_validate.py -v)
+  - validation_index: 2
+    validation_text: 'Run full suite: uv run pytest tests/ -q (verify count >= prior_count
+      + 12 and zero failures)'
+    evidence: tests/ full suite 308 passed; baseline before this handoff was 269;
+      delta +39 (>= +12 required)
+  - validation_index: 3
+    validation_text: 'Source grep: ''grep -nE "open\(.*[''\""]w|os\.write|safe_write_text|atomic_write|subprocess\.(Popen|run|call|check)|tmux"
+      lib/session_archive_validate.py'' — should match only the allowed git read invocations
+      and nothing else.'
+    evidence: source grep on lib/session_archive_validate.py matches only line 5 (docstring
+      'no tmux'), line 152 (subprocess.run rev-parse HEAD), line 168 (subprocess.run
+      status --porcelain) — no file-write / write-mode open / disallowed git verbs
+      / tmux send-keys
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: validate_archive_request returns ('parse_error', ...) for relative
+        report_path.
+      evidence: test_relative_report_path_returns_parse_error PASSED; also test_empty_report_path_returns_parse_error
+        PASSED
+    - criterion_index: 2
+      criterion_text: validate_archive_request returns ('unsafe_to_archive', ...)
+        for report_path outside repo_root or via symlink escape (test creates a symlink
+        pointing outside repo and asserts rejection).
+      evidence: test_symlink_escape_outside_repo_returns_unsafe_to_archive PASSED
+        (creates symlink in repo pointing at /tmp file outside repo, asserts RESULT_UNSAFE_TO_ARCHIVE)
+        and test_report_outside_repo_returns_unsafe_to_archive PASSED
+    - criterion_index: 3
+      criterion_text: validate_archive_request returns ('report_mismatch', ...) when
+        session-id arg != report's session_id.
+      evidence: test_session_id_mismatch_returns_report_mismatch PASSED
+    - criterion_index: 4
+      criterion_text: validate_archive_request returns ('parse_error', ...) when room_id/handoff_id/session_id
+        contains path traversal or other unsafe characters.
+      evidence: test_unsafe_session_id_slug_returns_parse_error PASSED (path traversal
+        in session_id) + test_unsafe_handoff_id_slug_returns_parse_error PASSED (tampered
+        session yaml carries unsafe handoff_id slug)
+    - criterion_index: 5
+      criterion_text: validate_archive_request returns ('unsafe_to_archive', ...)
+        when report.audit_verdict in (at-risk, unbound, parse-error).
+      evidence: test_non_promoted_audit_verdict_returns_unsafe_to_archive[at-risk|unbound|parse-error]
+        all 3 PASSED
+    - criterion_index: 6
+      criterion_text: validate_archive_request returns ('already_archived', ...) when
+        session YAML has archive.status='archived'.
+      evidence: test_already_archived_session_returns_already_archived PASSED
+    - criterion_index: 7
+      criterion_text: validate_archive_request returns ('stale_report', ...) when
+        current YAML hash differs from report's recorded hash.
+      evidence: test_session_yaml_hash_drift_returns_stale_report, test_handoff_yaml_hash_drift_returns_stale_report,
+        test_room_yaml_hash_drift_returns_stale_report all 3 PASSED
+    - criterion_index: 8
+      criterion_text: validate_archive_request returns ('stale_report', ...) when
+        git HEAD or worktree dirty-state changed since report.
+      evidence: test_git_head_drift_returns_stale_report PASSED (new commit moves
+        HEAD), test_git_worktree_dirty_drift_returns_stale_report PASSED (untracked
+        dirty.txt added after report)
+    - criterion_index: 9
+      criterion_text: validate_archive_request returns ('archived', None) on a fully-promoted,
+        fresh, well-formed report; validated_context dict contains all expected keys.
+      evidence: test_fresh_promoted_report_returns_archived PASSED — asserts validated_context
+        contains keys {report, report_path, session_id, handoff_id, room_id, session_state,
+        handoff_state, room_state, snapshots, git} and report_path is normalized realpath
+    - criterion_index: 10
+      criterion_text: 'Targeted tests: ''uv run pytest tests/test_session_archive_validate.py
+        -v'' — at least 12 cases (one per result enum value + edge cases for each
+        validation step).'
+      evidence: '24 targeted cases collected (>=12 required); all 6 result enums covered:
+        archived (test_fresh_promoted_*), stale_report (5 tests), unsafe_to_archive
+        (5 tests), report_mismatch (1), parse_error (8 tests), already_archived (1)'
+    - criterion_index: 11
+      criterion_text: 'Full suite green: ''uv run pytest tests/ -q'' — count increases
+        by ≥12, no regressions.'
+      evidence: Full suite 308 passed (baseline 269, delta +39 >= +12); zero failures
+    room: []
+  completed_by: orch-worker-a-foundation
+  summary: V2 session archive request validation implemented as pure functions in
+    lib/session_archive_validate.py. Locked 8-step validation order, 6-enum result
+    lock, no file writes / no tmux / no shell — only git rev-parse HEAD and git status
+    --porcelain (5s timeout, non-zero rejected). 24 targeted tests passing, full suite
+    308 passed (baseline 269, +39 delta).
+  files_changed:
+  - lib/session_archive_validate.py
+  - tests/test_session_archive_validate.py
+  verification:
+  - uv run pytest tests/test_session_archive_validate.py -v -> 24 passed
+  - uv run pytest tests/ -q -> 308 passed (was 269, delta +39)
+  - grep -nE 'open\(.*["]w|os\.write|safe_write_text|atomic_write|subprocess\.(Popen|run|call|check)|tmux'
+    lib/session_archive_validate.py -> matches only docstring 'no tmux' (line 5) and
+    the 2 allowed subprocess.run calls (lines 152, 168)
+  risks:
+  - gc_audit V1 reports do not yet record snapshots.*_yaml_sha256 / git.head_sha /
+    git.worktree_dirty; this module treats missing snapshots as parse_error per locked
+    contract. A separate follow-up handoff is required to extend gc_audit.py before
+    V2 archival can run end-to-end.
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T04:39:14Z'
+  note: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet recovery
+    per CTO-authorized operating model correction (tmux session = responsibility boundary,
+    not task boundary). External worker output recovered and integrated by team lead;
+    integration smoke green. Closing review to clear stale open-review noise. Code-review
+    findings (sys.exit→return, type-check ordering, etc.) tracked in orch-v2-session-archive-rework-1.
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - absorbed by parent (orch-v2-session-archive) team-lead internal tasklet recovery
+      per cto-authorized operating model correction (tmux session = responsibility
+      boundary, not task boundary). external worker output recovered and integrated
+      by team lead; integration smoke green. closing review to clear stale open-review
+      noise. code-review findings (sys.exit→return, type-check ordering, etc.) tracked
+      in orch-v2-session-archive-rework-1.
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

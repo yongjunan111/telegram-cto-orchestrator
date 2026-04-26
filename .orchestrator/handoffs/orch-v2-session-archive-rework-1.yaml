@@ -1,0 +1,378 @@
+handoff:
+  id: orch-v2-session-archive-rework-1
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'V2 Session Archive REWORK 1. YOU ARE TEAM LEAD = 1 tmux session =
+    1 feature responsibility boundary. Use INTERNAL Agent tool sub-agents (sonnet)
+    for slices; DO NOT create new external child handoff YAML files (CTO directive:
+    parent ledger that says completed must not have orphan open child YAML again).
+    Record all internal tasklets via ''orchctl handoff add-subtask orch-v2-session-archive-rework-1
+    --id <slug> --model-target <model> --owned-file <path>... --status completed --evidence
+    <text>'' so the delegate_required gate sees them. Suggested 6-tasklet split (your
+    call): (1) archive-report producer ''orchctl session archive-report <session-id>''
+    that reads session/room/handoff/git and emits V2-contract YAML (session_id, audit_verdict,
+    snapshots.*, git.*); (2) bundle context normalizer so CLI bundles have meaningful
+    session_summary/room_summary/handoff_summary/completion_state/review_state/worker_evidence/git_info/wiki_candidates
+    (not null); (3) timestamp collision fix (microsecond or suffix); (4) stamp-time
+    CAS rehash (session/handoff/room) before marker stamp; if drift -> stale_report
+    exit 1, no marker; (5) orchctl main() return-code propagation: cmd_session_archive
+    sys.exit -> return, main: sys.exit(args.func(args) or 0) (or document defer reason);
+    (6) e2e + CLI hash invariant test using REAL producer output. Final acceptance
+    smoke: orchctl session archive-report <sid> -> abs report path -> orchctl session
+    archive <sid> --from-report <abs report> -> meaningful bundle yaml/md + session
+    marker + rerun returns already_archived.'
+  scope: 'ALLOWED FILE EDITS: lib/session_archive*.py, lib/sessions.py (only if archive-report
+    producer needs read accessor), tests/test_session_archive*.py, tests/test_session_archive_report*.py
+    (new ok), orchctl (add archive-report subparser; keep existing ''session archive''
+    surface unchanged). FORBIDDEN EDITS: lib/handoffs.py, lib/rooms.py, lib/dispatch.py,
+    lib/bootstrap.py, lib/session_cleanup.py, lib/storage.py, .orchestrator/wiki/**,
+    .orchestrator/handoffs/**, .orchestrator/rooms/**, anything under .orchestrator/runtime/sessions
+    (read-only except marker stamp via existing bundle module). Trust-but-verify all
+    sub-agent outputs before recording add-subtask.'
+  constraints:
+  - 'LOCKED RESULT ENUM (immutable): archived | stale_report | unsafe_to_archive |
+    report_mismatch | parse_error | already_archived. No new values, no renames.'
+  - 'LOCKED CLI SURFACE for archive consumer (immutable): ''orchctl session archive
+    <session-id> --from-report <absolute-path>''. --from-report REQUIRED + absolute.
+    NO --force, --best-effort, --skip-verify, --auto. Exit 0 only on archived.'
+  - 'NEW PRODUCER (preferred): ''orchctl session archive-report <session-id>''. Writes
+    V2-contract YAML to a deterministic derived path (suggest .orchestrator/runtime/session-archive-reports/<session-id>/<UTC-ts>.yaml).
+    Reports MUST contain session_id, audit_verdict (==''promoted'' to allow archive),
+    snapshots.{session,handoff,room} hashes matching current YAML state, git.{head_sha,worktree_dirty}.
+    No --force / no automation flags.'
+  - 'NO external child handoff YAML files. All sub-work must be team-lead-internal
+    tasklets recorded only via ''orchctl handoff add-subtask'' on this parent. Reason:
+    prior V2 left 3 orphan open child YAMLs while parent ledger said completed; never
+    repeat.'
+  - NO cron / hooks / idle-timer / tmux subprocess / direct .orchestrator/wiki writes
+    / V3 idle automation. Manual CLI only.
+  - 'Trust-but-verify: team lead inspects each sub-agent diff and runs targeted pytest
+    BEFORE running ''handoff add-subtask''. No add-subtask without local pytest evidence.'
+  - delegate_required gate enforced. parent 'handoff complete' will fail-closed if
+    execution.child_handoffs is empty or has 0 completed entries.
+  acceptance_criteria:
+  - 'P1 fixed: A real V2-contract producer exists (preferred ''orchctl session archive-report
+    <session-id>''). e2e smoke chain works end-to-end with NO synthetic fixture: producer
+    -> abs report path -> ''orchctl session archive <sid> --from-report <abs>'' ->
+    archived (exit 0). Test name + producer module path cited in completion.'
+  - 'P2 fixed (bundle null shell): bundle YAML written via real CLI path (not synthetic
+    test fixture) contains non-null meaningful session_summary, room_summary, handoff_summary,
+    completion_state, review_state, worker_evidence_or_checkpoint_refs (where available),
+    git_info, next_action, and wiki_candidates (at least empty list, not null). Test
+    asserts on real CLI output, not synthetic dict.'
+  - 'P2 fixed (timestamp collision): two archives in same UTC second (or with mocked
+    clock) produce two distinct files (no overwrite). Test forces collision and verifies
+    both bundles exist with distinct paths.'
+  - 'P2 fixed (stamp-time CAS): if session/handoff/room YAML changes between bundle
+    write and marker stamp, marker is NOT written and result is stale_report (exit
+    1). Test mutates a YAML mid-flow and asserts no marker.'
+  - 'P2 fixed (ledger hygiene addressed at CTO layer): CTO will close prior 3 stale
+    child handoffs (orch-v2-archive-validate, -bundle, -cli) outside this handoff.
+    Team lead does NOT touch those YAMLs. Just confirm in completion report that no
+    NEW orphan child YAML was created by this rework.'
+  - 'Optional / can defer with reason: cmd_session_archive sys.exit(1) -> return 1
+    + orchctl main ''sys.exit(args.func(args) or 0)'' propagation. CLI-level hash
+    invariant test (room/handoff YAML SHA-256 unchanged after successful archive)
+    MUST be added regardless.'
+  - 'Full pytest suite green: ''uv run pytest tests/ -q'' passes, with new tests for
+    each P1/P2 finding fixed. No regressions.'
+  - 'Parent execution.child_handoffs ledger has >=1 completed entry (delegate_required
+    gate). Each entry: real internal tasklet slug, model_target, owned_files matching
+    diff, status=completed, evidence with test name + line count delta.'
+  report_back: 'Telegram thread (chat 8585947943): 6 mandatory items - (1) team-lead/internal
+    tasklets used + reason no external tmux; (2) exact files changed (git diff --stat);
+    (3) per-finding fixed/deferred + evidence + test name; (4) targeted + full pytest
+    results with count delta; (5) manual smoke command chain (producer -> archive
+    -> rerun) with exit codes + bundle/marker paths; (6) final state of orch-v2-session-archive-rework-1
+    (and confirm no new orphan child YAML).'
+  non_goals:
+  - V3 idle/cron/hook/timer automation. Defer.
+  - tmux lifecycle automation, session kill, pane reaping. Defer.
+  - Direct writes to .orchestrator/wiki/**. Wiki hints stay in bundle field only.
+  - New external child handoff YAML files. All sub-work is internal-tasklet only.
+  - Touching unrelated modules (lib/handoffs.py, lib/dispatch.py, lib/bootstrap.py,
+    lib/session_cleanup.py, lib/gc_audit.py, lib/idle_snapshot.py, lib/storage.py).
+  - Closing/cleaning the 3 prior stale child handoffs (CTO handles separately).
+  invariants:
+  - Locked result enum + locked CLI surface unchanged across this rework.
+  - Archive bundle path stays under .orchestrator/runtime/session-archives/<session-id>/.
+    Producer reports under .orchestrator/runtime/session-archive-reports/<session-id>/
+    (or equivalent derived path).
+  - safe_write_text containment + symlink-refuse + atomic rename used for ALL new
+    derived writes.
+  - No subprocess/tmux/network/wiki write inside lib/session_archive*.py executable
+    code (grep test enforced).
+  - Marker stamp touches session YAML only — never room/handoff YAML.
+  - delegate_required gate must be passed by REAL completed internal tasklets, not
+    by synthetic add-subtask entries that don't reflect actual diff.
+  failure_examples:
+  - Team lead creates new file under .orchestrator/handoffs/ for sub-work — VIOLATION
+    of CTO no-external-child rule.
+  - Bundle YAML still contains null session_summary/handoff_summary/etc on real CLI
+    path even though synthetic-fixture test passes — P2 not fixed.
+  - Smoke chain still requires hand-written V2-contract report file — P1 not fixed.
+  - add-subtask entries don't match actual git diff (e.g. claim owned_files that weren't
+    touched) — gate-cheating, will be rejected at review.
+  validation:
+  - 'After each tasklet: ''uv run pytest tests/test_session_archive*.py -v'' green
+    before recording add-subtask.'
+  - 'Final: ''uv run pytest tests/ -q'' full suite green; report count delta.'
+  - 'Final smoke (manual, real): orchctl session archive-report <sid> -> capture report
+    abs path -> orchctl session archive <sid> --from-report <abs> -> exit 0 + bundle
+    yaml/md path; rerun -> exit 1 already_archived. Capture commands + exit codes
+    + paths in completion report.'
+  - 'Hash invariant: ''sha256sum .orchestrator/handoffs/*.yaml .orchestrator/rooms/**/state.yaml''
+    before vs after smoke -> identical (only the dispatched session YAML and runtime
+    archives differ).'
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-v2-archive-rework-producer
+    model_target: sonnet
+    owned_files:
+    - lib/session_archive_report.py
+    - tests/test_session_archive_report.py
+    - orchctl
+    status: completed
+    evidence: 'P1 fix: real V2-contract producer ''orchctl session archive-report
+      <sid>''. NEW lib/session_archive_report.py (348 lines): reads session/handoff/room
+      YAML, computes sha256 (matching validator), runs git rev-parse + status, derives
+      audit_verdict (3 review layouts: top-level canonical, handoff.review legacy,
+      resolution.review alt), emits report under .orchestrator/runtime/session-archive-reports/<sid>/<UTC-ts>.yaml
+      via safe_write_text with -N collision suffix. NEW tests/test_session_archive_report.py:
+      12 tests (happy path, all V2-contract keys, sha256 snapshots, git head_sha +
+      worktree_dirty clean+dirty, at-risk for open and changes_requested, missing
+      session yaml exit 1, unsafe slug exit 1, chained e2e producer->archive, collision
+      suffix, top-level review canonical layout regression). orchctl: +1 import line
+      + 5-line subparser block (16 lines total).'
+  - id: orch-v2-archive-rework-bundle
+    model_target: sonnet
+    owned_files:
+    - lib/session_archive_bundle.py
+    - tests/test_session_archive_bundle.py
+    status: completed
+    evidence: 'P2 fix (bundle null shell + ts collision). lib/session_archive_bundle.py:
+      NEW _enrich_validated_context (idempotent additive normalizer derives all 12
+      bundle keys from session_state/handoff_state/room_state/git/report_path; pre-existing
+      non-None keys preserved); NEW _resolve_collision_basenames appends -N suffix
+      when same UTC-second collides. write_archive_bundle wires both. Team-lead follow-up:
+      review_state extraction now also checks canonical top-level handoff_state.review
+      (was checking only nested layouts). tests/test_session_archive_bundle.py: 20
+      tests (was 15, +5 new: collision_distinct_files, real_cli_no_null_required_values,
+      normalizer_preserves_explicit_values, normalizer_derives_session_summary, normalizer_uses_empty_collection_not_none);
+      test_bundle_yaml_keys_present_when_context_lacks_data updated from ''is None''
+      to ''is not None / isinstance list'' to reflect intentional null->empty-collection
+      semantic shift.'
+  - id: orch-v2-archive-rework-cli
+    model_target: sonnet
+    owned_files:
+    - lib/session_archive.py
+    - tests/test_session_archive_cli.py
+    - orchctl
+    status: completed
+    evidence: 'P2 fix (stamp-time CAS rehash) + T5 (return-code propagation). lib/session_archive.py:
+      NEW inline _sha256_file helper; NEW step 2.5 between bundle write and marker
+      stamp re-hashes session/handoff/room YAML against validated_context.snapshots,
+      fails closed with ''stale_report: <label> sha256 changed since validation''
+      (no marker stamped) on any drift; ALL sys.exit(1) replaced with return 1 (cmd_session_archive
+      returns int for both success and failure paths). orchctl main(): now propagates
+      handler return codes via ''rc = args.func(args); sys.exit(rc if isinstance(rc,
+      int) else 0)'' (legacy handlers returning None still exit 0). tests/test_session_archive_cli.py:
+      16 tests (was 9, +7 new: 3 CAS drift tests for session/handoff/room, returns_int_not_sys_exit_on_failure,
+      returns_0_on_success, orchctl_main_propagates_return_code, room_handoff_yaml_hash_invariant_after_successful_archive);
+      5 existing tests converted from pytest.raises(SystemExit) to direct rc==1 assertions
+      to match new return-int contract. Full pytest tests/ -q: 341 passed (was 269
+      pre-V2; +72 dedicated). Manual smoke 1 (orch-worker-b-adr-orch-session-cleanup-policy-v1):
+      producer exit 0; archive exit 0; hash invariant on 31 handoff yaml + 1 room
+      state.yaml IDENTICAL; session yaml sha CHANGED. Manual smoke 2 (fs-worker-1-first-shovel-cleanup):
+      same pattern green; bundle review_state populated with full block (outcome=approved,
+      reviewed_by=cto, note). Re-run: archive returns exit 1 already_archived.'
+timestamps:
+  created_at: '2026-04-26T04:38:13Z'
+  claimed_at: '2026-04-26T04:59:32Z'
+  completed_at: '2026-04-26T05:00:25Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: 'After each tasklet: ''uv run pytest tests/test_session_archive*.py
+      -v'' green before recording add-subtask.'
+    evidence: 'Targeted pytest green before each add-subtask: producer 12/12, bundle
+      20/20, cli 16/16; recorded only after evidence collection'
+  - validation_index: 2
+    validation_text: 'Final: ''uv run pytest tests/ -q'' full suite green; report
+      count delta.'
+    evidence: Final full suite uv run pytest tests/ -q -> 341 passed (was 269 baseline
+      pre-V2; +72 net for the V2 archive feature, of which +24 from this rework)
+  - validation_index: 3
+    validation_text: 'Final smoke (manual, real): orchctl session archive-report <sid>
+      -> capture report abs path -> orchctl session archive <sid> --from-report <abs>
+      -> exit 0 + bundle yaml/md path; rerun -> exit 1 already_archived. Capture commands
+      + exit codes + paths in completion report.'
+    evidence: Manual smoke chain executed twice on real sessions (orch-worker-b-adr-orch-session-cleanup-policy-v1
+      and fs-worker-1-first-shovel-cleanup); commands + exit codes + bundle/marker
+      paths captured above
+  - validation_index: 4
+    validation_text: 'Hash invariant: ''sha256sum .orchestrator/handoffs/*.yaml .orchestrator/rooms/**/state.yaml''
+      before vs after smoke -> identical (only the dispatched session YAML and runtime
+      archives differ).'
+    evidence: 'Hash invariant sha256sum on .orchestrator/handoffs/*.yaml + .orchestrator/rooms/orchestrator-hardening-gc-v1/state.yaml:
+      32 lines IDENTICAL before vs after archive run; only session yaml differs'
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'P1 fixed: A real V2-contract producer exists (preferred ''orchctl
+        session archive-report <session-id>''). e2e smoke chain works end-to-end with
+        NO synthetic fixture: producer -> abs report path -> ''orchctl session archive
+        <sid> --from-report <abs>'' -> archived (exit 0). Test name + producer module
+        path cited in completion.'
+      evidence: 'P1 FIXED. Producer module lib/session_archive_report.py + ''orchctl
+        session archive-report <sid>'' subparser. tests/test_session_archive_report.py::test_chained_e2e_producer_then_archive
+        validates chain in-test. Manual smoke chain run twice on real sessions: producer
+        abs path -> archive --from-report <abs> -> exit 0 archived. NO synthetic fixture
+        used in smoke.'
+    - criterion_index: 2
+      criterion_text: 'P2 fixed (bundle null shell): bundle YAML written via real
+        CLI path (not synthetic test fixture) contains non-null meaningful session_summary,
+        room_summary, handoff_summary, completion_state, review_state, worker_evidence_or_checkpoint_refs
+        (where available), git_info, next_action, and wiki_candidates (at least empty
+        list, not null). Test asserts on real CLI output, not synthetic dict.'
+      evidence: 'P2 FIXED (bundle null shell). _enrich_validated_context (lib/session_archive_bundle.py)
+        idempotently derives 12 bundle keys from validator-supplied session_state/handoff_state/room_state/git/report_path;
+        missing sources resolve to empty-typed values (never None). Real-CLI smoke
+        verified: bundle YAML non-null on session_summary, room_summary, handoff_summary,
+        completion_state, review_state, worker_evidence, git_info, next_action, wiki_candidates.
+        tests/test_session_archive_bundle.py::test_real_cli_bundle_has_no_null_required_values
+        asserts on real CLI output.'
+    - criterion_index: 3
+      criterion_text: 'P2 fixed (timestamp collision): two archives in same UTC second
+        (or with mocked clock) produce two distinct files (no overwrite). Test forces
+        collision and verifies both bundles exist with distinct paths.'
+      evidence: P2 FIXED (timestamp collision). _resolve_collision_basenames (lib/session_archive_bundle.py)
+        appends -1, -2, ... suffix when same UTC-second collides; both yaml and md
+        share the suffix. tests/test_session_archive_bundle.py::test_collision_in_same_utc_second_produces_distinct_files
+        forces collision and verifies both bundles exist with distinct paths.
+    - criterion_index: 4
+      criterion_text: 'P2 fixed (stamp-time CAS): if session/handoff/room YAML changes
+        between bundle write and marker stamp, marker is NOT written and result is
+        stale_report (exit 1). Test mutates a YAML mid-flow and asserts no marker.'
+      evidence: 'P2 FIXED (stamp-time CAS). lib/session_archive.py step 2.5 re-hashes
+        session/handoff/room YAML between bundle write and marker stamp; mismatch
+        -> stderr ''stale_report: <label> sha256 changed since validation'' + return
+        1, no marker. tests/test_session_archive_cli.py::test_stamp_time_cas_{session,handoff,room}_yaml_drift_returns_stale_report_no_marker
+        verify all three drift sources.'
+    - criterion_index: 5
+      criterion_text: 'P2 fixed (ledger hygiene addressed at CTO layer): CTO will
+        close prior 3 stale child handoffs (orch-v2-archive-validate, -bundle, -cli)
+        outside this handoff. Team lead does NOT touch those YAMLs. Just confirm in
+        completion report that no NEW orphan child YAML was created by this rework.'
+      evidence: LEDGER HYGIENE. No new external child handoff YAML files created.
+        ls .orchestrator/handoffs/ shows pre-existing yamls only; the 3 internal tasklets
+        are recorded in this parent's execution.child_handoffs via 'orchctl handoff
+        add-subtask' (orch-v2-archive-rework-producer, -bundle, -cli). The 3 stale
+        prior child handoffs (orch-v2-archive-validate, -bundle, -cli) untouched per
+        CTO directive.
+    - criterion_index: 6
+      criterion_text: 'Optional / can defer with reason: cmd_session_archive sys.exit(1)
+        -> return 1 + orchctl main ''sys.exit(args.func(args) or 0)'' propagation.
+        CLI-level hash invariant test (room/handoff YAML SHA-256 unchanged after successful
+        archive) MUST be added regardless.'
+      evidence: 'T5 IMPLEMENTED (not deferred). cmd_session_archive returns int (sys.exit(1)
+        -> return 1 throughout). orchctl main(): rc = args.func(args); sys.exit(rc
+        if isinstance(rc, int) else 0). CLI-level hash invariant test added at tests/test_session_archive_cli.py::test_room_handoff_yaml_hash_invariant_after_successful_archive
+        (asserts handoff + room sha unchanged across successful archive, only session
+        sha changes).'
+    - criterion_index: 7
+      criterion_text: 'Full pytest suite green: ''uv run pytest tests/ -q'' passes,
+        with new tests for each P1/P2 finding fixed. No regressions.'
+      evidence: 'FULL PYTEST GREEN. uv run pytest tests/ -q -> 341 passed. New dedicated
+        tests added per finding: producer 12, bundle +5 (=20), cli +7 (=16). No regressions
+        in 269 pre-V2 baseline.'
+    - criterion_index: 8
+      criterion_text: 'Parent execution.child_handoffs ledger has >=1 completed entry
+        (delegate_required gate). Each entry: real internal tasklet slug, model_target,
+        owned_files matching diff, status=completed, evidence with test name + line
+        count delta.'
+      evidence: 'LEDGER >=1 completed. execution.child_handoffs has 3 completed entries:
+        orch-v2-archive-rework-producer (sonnet, 3 owned files), orch-v2-archive-rework-bundle
+        (sonnet, 2 owned files), orch-v2-archive-rework-cli (sonnet, 3 owned files).
+        delegate_required gate satisfied by REAL completed internal tasklets backed
+        by actual diff.'
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: 'V2 session archive rework-1 ships P1 (real V2-contract producer ''orchctl
+    session archive-report <sid>'') + P2 fixes (bundle non-null normalizer, timestamp
+    collision suffix, stamp-time CAS rehash, return-code propagation). 3 internal
+    Agent(sonnet) tasklets recorded in execution.child_handoffs (delegate_required
+    gate satisfied; NO new external child handoff YAMLs created). Full pytest 269->341
+    (+72 across producer/bundle/cli, 12 new producer tests, 20 bundle tests was 15,
+    16 cli tests was 9). Manual smoke chain green on 2 real sessions: producer ->
+    abs report path -> archive --from-report <abs> -> exit 0 + bundle yaml/md + session
+    marker stamped; rerun -> exit 1 already_archived. Hash invariant verified on 31
+    handoff yaml + 1 room state.yaml identical before vs after; only the dispatched
+    session yaml changed. Locked V2 contract honored: 6-value enum unchanged, --from-report
+    required absolute, no --force/--auto/--skip-verify, archive bundle path under
+    .orchestrator/runtime/session-archives/<sid>/, marker schema {status,archived_at,archive_path,from_report}
+    touches session YAML only. Bundle review_state, completion_state, worker_evidence,
+    handoff_summary, room_summary, session_summary now populated with meaningful real-CLI
+    values (not synthetic fixtures). No new orphan child YAML created.'
+  files_changed:
+  - lib/session_archive_report.py (NEW; producer tasklet)
+  - tests/test_session_archive_report.py (NEW; 12 tests)
+  - lib/session_archive.py (MODIFY; CAS + return-int)
+  - lib/session_archive_bundle.py (MODIFY; normalizer + ts collision + canonical review
+    fix)
+  - tests/test_session_archive_bundle.py (MODIFY; +5 tests, 1 updated; total 20)
+  - tests/test_session_archive_cli.py (MODIFY; +7 tests, 5 converted; total 16)
+  - orchctl (MODIFY; +archive-report subparser + main return-code propagation)
+  verification:
+  - uv run pytest tests/ -q -> 341 passed, 0 failed (was 269 pre-V2; +72 across A=24+B=15+C=9
+    V1 + producer=12+bundle=+5+cli=+7 V2-rework)
+  - uv run pytest tests/test_session_archive_report.py -v -> 12/12 PASS
+  - uv run pytest tests/test_session_archive_bundle.py -v -> 20/20 PASS
+  - uv run pytest tests/test_session_archive_cli.py -v -> 16/16 PASS
+  - 'Manual smoke A (orch-worker-b-adr-orch-session-cleanup-policy-v1): orchctl session
+    archive-report -> /home/dydwn/projects/telegram-cto-orchestrator/.orchestrator/runtime/session-archive-reports/<sid>/2026-04-26T04:56:34Z.yaml;
+    orchctl session archive --from-report <abs> -> exit 0 archived: <bundle-yaml-path>;
+    rerun -> exit 1 already_archived'
+  - 'Manual smoke B (fs-worker-1-first-shovel-cleanup): producer exit 0 + archive
+    exit 0 with bundle review_state.outcome=''approved'' + worker_evidence count=5
+    (real handoff resolution.verification entries)'
+  - 'Hash invariant: sha256sum on 31 handoffs + 1 room state.yaml IDENTICAL before
+    vs after manual smoke; only the dispatched session yaml sha CHANGED (marker stamped).
+    diff /tmp/before-hashes.txt /tmp/after-hashes.txt -> empty'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T05:02:35Z'
+  note: 'All 5 code-review findings (P1 producer, P2 bundle null shell, ts collision,
+    stamp-time CAS, return-code propagation) fixed with real-CLI tests. CLI-level
+    hash invariant test added. Real producer e2e smoke green on 2 sessions; CTO independent
+    verification: producer ran on at-risk session (correctly emits at-risk verdict),
+    archive correctly refused with unsafe_to_archive exit 1; full pytest 341/341 green.
+    Layout-bug catch on canonical top-level review.outcome was non-trivial — exactly
+    the regression synthetic fixtures missed. delegate_required gate satisfied by
+    3 real internal tasklets (producer/bundle/cli) backed by actual diff. NO new external
+    child YAML created (CTO ledger-hygiene constraint honored).'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'all 5 code-review findings (p1 producer, p2 bundle null shell, ts collision,
+      stamp-time cas, return-code propagation) fixed with real-cli tests. cli-level
+      hash invariant test added. real producer e2e smoke green on 2 sessions; cto
+      independent verification: producer ran on at-risk session (correctly emits at-risk
+      verdict), archive correctly refused with unsafe_to_archive exit 1; full pytest
+      341/341 green. layout-bug catch on canonical top-level review.outcome was non-trivial
+      — exactly the regression synthetic fixtures missed. delegate_required gate satisfied
+      by 3 real internal tasklets (producer/bundle/cli) backed by actual diff. no
+      new external child yaml created (cto ledger-hygiene constraint honored).'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

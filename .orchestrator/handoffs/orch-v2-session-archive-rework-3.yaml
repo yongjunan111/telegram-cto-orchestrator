@@ -1,0 +1,296 @@
+handoff:
+  id: orch-v2-session-archive-rework-3
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'V2 archive rework-3. Close 3 invariant-level findings from post-approval
+    adversarial review (docs/issue-v2-session-archive-rework-churn.md). YOU ARE TEAM
+    LEAD = same responsibility boundary as rework-1/2 (reuse same pane). 1-2 internal
+    Agent(sonnet) tasklets, NO new external child YAML. Findings: (1) report write
+    containment must hold for symlinks ABOVE reports_root, not just at session-dir
+    level. Either raise safe_write_text base_dir to repo_root/.orchestrator OR add
+    explicit parent-chain no-symlink check from repo down to reports_root. Pre-plant
+    a symlink above reports_root (e.g. .orchestrator/runtime -> /tmp/escape) BEFORE
+    producer runs; cmd_session_archive_report must exit 1 with outside dir remaining
+    empty. (2) atomic filename reservation. Two producers in same UTC second observing
+    same first path must NOT overwrite each other. Use O_CREAT|O_EXCL semantics or
+    equivalent atomic reservation with retry on FileExistsError. Do NOT weaken safe_write_text.
+    Final paths stay under .orchestrator/runtime/session-archive-reports/<sid>/<ts>[-N].yaml.
+    Test: simulate/coordinate concurrent calls that observe same timestamp; assert
+    distinct paths AND both files retain own contents. (3) parent help surface ''orchctl
+    session --help'' must say V2 archive-report YAML produced by orchctl session archive-report
+    (currently still says promoted gc-audit/idle-snapshot). Both surfaces verified.'
+  scope: 'ALLOWED: lib/session_archive_report.py, tests/test_session_archive_report.py,
+    orchctl. OPTIONAL ALLOWED (only if needed): lib/storage.py + tests/test_storage.py
+    for reusable atomic no-overwrite helper (keep blast radius tiny + run full tests).
+    FORBIDDEN: lib/session_archive.py, lib/session_archive_bundle.py, lib/session_archive_validate.py,
+    lib/handoffs.py, lib/bootstrap.py, lib/session_cleanup.py, .orchestrator/wiki/**,
+    .orchestrator/handoffs/**, .orchestrator/rooms/**.'
+  constraints:
+  - Tiny scope. No V3 features. No idle/cron/hooks/cleanup automation. No --force/--best-effort/--skip-verify.
+    No direct wiki write. No tmux subprocess. No new operator-facing flags.
+  - NO new external child handoff YAML files. 1-2 internal Agent(sonnet) tasklets
+    only, recorded via add-subtask on this parent.
+  - delegate_required gate enforced.
+  - 'Trust-but-verify: run targeted pytest BEFORE add-subtask. Concurrent test must
+    actually exercise the race (mocked timestamp + sequenced calls or threaded), not
+    just sequential collision.'
+  acceptance_criteria:
+  - 'INVARIANT: archive-report writer cannot escape the repo-owned orchestrator tree
+    through ANY symlinked parent in the chain repo_root -> .orchestrator -> runtime
+    -> session-archive-reports -> <sid>. Test must pre-plant symlink ABOVE reports_root
+    (not at session-dir level) and prove cmd_session_archive_report exits 1 with no
+    write to the symlink target.'
+  - 'INVARIANT: no producer can overwrite another producer''s report under any same-session
+    same-second contention. Atomic reservation (O_CREAT|O_EXCL or equivalent) is used.
+    Test simulates the race where two producers observe identical timestamp + same
+    first candidate path; both must produce DISTINCT final paths AND retain own contents
+    (not just distinct paths via post-hoc retry). safe_write_text containment must
+    NOT be weakened.'
+  - 'INVARIANT: every operator-facing CLI help surface that references --from-report
+    contract states the V2 contract uniformly (no surface mentions promoted gc-audit
+    / idle-snapshot). Verified on BOTH ''orchctl session --help'' AND ''orchctl session
+    archive --help''.'
+  - 'Targeted pytest green: ''uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -q'' (and tests/test_storage.py if storage touched). Full suite green: ''uv run
+    pytest tests/ -q'' (>=342, no regressions).'
+  - Parent execution.child_handoffs has >=1 completed entry with real owned_files
+    matching diff; no new external child YAML.
+  report_back: 'Telegram chat 8585947943 reply_to 4501: (1) handoff id/status; (2)
+    internal tasklet ledger (slug + model + owned files); (3) exact files changed
+    (git diff --stat); (4) targeted + full pytest results; (5) help output verification
+    (both surfaces); (6) all 3 findings closed Y/N with one-line evidence each.'
+  non_goals:
+  - V3 idle/cron/hooks/cleanup automation. Defer.
+  - Adversarial-review approval gate (separate proposal, not this handoff).
+  - Invariant/example schema separation in handoffs (separate proposal).
+  - Verifier peer separation (separate proposal).
+  - New external child handoff YAML.
+  - Touching unrelated archive modules (validate, bundle, cli orchestration).
+  invariants:
+  - Locked result enum + locked CLI surface + safe_write_text containment behavior
+    unchanged.
+  - Archive bundle/report path shapes unchanged.
+  - No subprocess/tmux/network/wiki write inside lib/session_archive_report.py.
+  failure_examples: []
+  validation:
+  - uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -v after each tasklet.
+  - uv run pytest tests/ -q (full).
+  - uv run python orchctl session --help AND uv run python orchctl session archive
+    --help — both must show V2 archive-report wording, neither mentions gc-audit/idle-snapshot.
+  - 'Independent symlink-above-reports_root test: pre-plant symlink, run producer,
+    assert exit 1 + symlink target empty.'
+  - 'Independent concurrent-reservation test: simulate same-timestamp same-path race,
+    assert distinct file contents preserved.'
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-v2-archive-rework3-tasklet
+    model_target: sonnet
+    owned_files:
+    - lib/session_archive_report.py
+    - orchctl
+    - tests/test_session_archive_report.py
+    status: completed
+    evidence: 'Three INVARIANT-level fixes batched. (1) lib/session_archive_report.py:
+      NEW _orchestrator_dir(repo_root) returns <repo>/.orchestrator; cmd_session_archive_report
+      now passes orchestrator_dir as safe_write_text base_dir (was reports_root).
+      safe_write_text now walks the chain from <sid> up to .orchestrator, refusing
+      symlinks at runtime, session-archive-reports, or <sid> level. ADDITIONAL defense-in-depth:
+      NEW _check_no_symlink_in_chain helper invoked from _reserve_unique_target BEFORE
+      makedirs to prevent following any symlinked component into uncontrolled dirs.
+      safe_write_text NOT weakened. (2) lib/session_archive_report.py: REPLACED _report_target_path
+      (check-then-write) with _reserve_unique_target using os.open(path, O_CREAT|O_EXCL|O_WRONLY,
+      0o600) for atomic name reservation; retries with -1, -2, ... suffix on FileExistsError;
+      max_attempts=10000. The reservation creates a 0-byte placeholder; safe_write_text
+      overwrites it via tempfile+atomic-rename. Two concurrent producers observing
+      the same first candidate path can no longer overwrite each other. (3) orchctl
+      line 381: archive parser help= changed from ''Archive a completed session given
+      a promoted gc-audit/idle-snapshot report'' to ''Archive a completed session
+      using a V2 archive-report YAML (see session archive-report)''. tests/test_session_archive_report.py:
+      +3 tests (test_symlink_above_reports_root_is_refused, test_atomic_reservation_does_not_overwrite_concurrent_producer_file,
+      test_atomic_reservation_skips_multiple_existing_paths). Targeted pytest tests/test_session_archive_report.py
+      tests/test_session_archive_cli.py -q -> 32 passed (was 29, +3). Full pytest
+      tests/ -q -> 345 passed (was 342, +3, 0 regressions). orchctl session --help:
+      ''archive'' line shows V2 wording, no gc-audit/idle-snapshot. orchctl session
+      archive --help: --from-report shows rework-2 V2 wording (unchanged). Smoke:
+      orchctl session archive-report orch-worker-d-gc-aud-orch-room-gc-audit-v1 ->
+      /home/dydwn/projects/telegram-cto-orchestrator/.orchestrator/runtime/session-archive-reports/orch-worker-d-gc-aud-orch-room-gc-audit-v1/2026-04-26T05:53:08Z.yaml
+      exit 0.'
+timestamps:
+  created_at: '2026-04-26T05:47:41Z'
+  claimed_at: '2026-04-26T05:57:59Z'
+  completed_at: '2026-04-26T05:57:59Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+      -v after each tasklet.
+    evidence: Targeted pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+      -v after tasklet -> 32 passed including 3 new invariant tests (symlink-above-reports_root,
+      atomic-reservation pre-plant single, atomic-reservation pre-plant -1)
+  - validation_index: 2
+    validation_text: uv run pytest tests/ -q (full).
+    evidence: Full pytest tests/ -q -> 345 passed (no regression vs rework-2 baseline
+      342; +3 net for 3 new invariant tests)
+  - validation_index: 3
+    validation_text: uv run python orchctl session --help AND uv run python orchctl
+      session archive --help — both must show V2 archive-report wording, neither mentions
+      gc-audit/idle-snapshot.
+    evidence: 'Both help surfaces verified. orchctl session --help: archive shown
+      with V2 archive-report wording, no gc-audit/idle-snapshot. orchctl session archive
+      --help: --from-report rework-2 V2 wording preserved. Neither surface mentions
+      gc-audit or idle-snapshot.'
+  - validation_index: 4
+    validation_text: 'Independent symlink-above-reports_root test: pre-plant symlink,
+      run producer, assert exit 1 + symlink target empty.'
+    evidence: 'Symlink-above-reports_root test (test_symlink_above_reports_root_is_refused):
+      pre-plants symlink at .orchestrator/runtime/session-archive-reports BEFORE producer
+      runs, pointing to outside-repo dir. cmd_session_archive_report exits 1; outside
+      dir os.listdir returns empty list (no escape).'
+  - validation_index: 5
+    validation_text: 'Independent concurrent-reservation test: simulate same-timestamp
+      same-path race, assert distinct file contents preserved.'
+    evidence: 'Concurrent-reservation test (test_atomic_reservation_does_not_overwrite_concurrent_producer_file
+      + test_atomic_reservation_skips_multiple_existing_paths): pre-plants <ts>.yaml
+      with sentinel content; forces producer to observe same _utc_now_iso; producer
+      reserves <ts>-1.yaml (or <ts>-2.yaml when -1 also pre-planted); pre-planted
+      contents bytewise unchanged; new path contains valid V2 report. Atomic via O_CREAT|O_EXCL.'
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'INVARIANT: archive-report writer cannot escape the repo-owned
+        orchestrator tree through ANY symlinked parent in the chain repo_root -> .orchestrator
+        -> runtime -> session-archive-reports -> <sid>. Test must pre-plant symlink
+        ABOVE reports_root (not at session-dir level) and prove cmd_session_archive_report
+        exits 1 with no write to the symlink target.'
+      evidence: INVARIANT 1 CLOSED. lib/session_archive_report.py raises safe_write_text
+        base_dir from reports_root to <repo>/.orchestrator (covers runtime, session-archive-reports,
+        <sid> in chain walk). _check_no_symlink_in_chain adds defense-in-depth pre-makedirs.
+        tests/test_session_archive_report.py::test_symlink_above_reports_root_is_refused
+        pre-plants symlink ABOVE reports_root and proves no write occurs (outside
+        dir empty, exit 1).
+    - criterion_index: 2
+      criterion_text: 'INVARIANT: no producer can overwrite another producer''s report
+        under any same-session same-second contention. Atomic reservation (O_CREAT|O_EXCL
+        or equivalent) is used. Test simulates the race where two producers observe
+        identical timestamp + same first candidate path; both must produce DISTINCT
+        final paths AND retain own contents (not just distinct paths via post-hoc
+        retry). safe_write_text containment must NOT be weakened.'
+      evidence: INVARIANT 2 CLOSED. _reserve_unique_target uses os.open(path, O_CREAT|O_EXCL|O_WRONLY,
+        0o600) — atomic OS-level reservation, retries on FileExistsError. safe_write_text
+        contract NOT weakened (still uses tempfile+atomic-rename to overwrite the
+        placeholder). Two tests prove pre-planted files at <ts>.yaml and <ts>-1.yaml
+        are not overwritten; producer reserves -1 / -2 and writes valid V2 report.
+    - criterion_index: 3
+      criterion_text: 'INVARIANT: every operator-facing CLI help surface that references
+        --from-report contract states the V2 contract uniformly (no surface mentions
+        promoted gc-audit / idle-snapshot). Verified on BOTH ''orchctl session --help''
+        AND ''orchctl session archive --help''.'
+      evidence: INVARIANT 3 CLOSED. orchctl line 381 add_parser('archive', help=...)
+        updated to 'Archive a completed session using a V2 archive-report YAML (see
+        session archive-report)'. orchctl session --help confirms new wording on parent
+        surface; orchctl session archive --help retains rework-2 --from-report wording.
+        Neither surface mentions gc-audit/idle-snapshot.
+    - criterion_index: 4
+      criterion_text: 'Targeted pytest green: ''uv run pytest tests/test_session_archive_report.py
+        tests/test_session_archive_cli.py -q'' (and tests/test_storage.py if storage
+        touched). Full suite green: ''uv run pytest tests/ -q'' (>=342, no regressions).'
+      evidence: Targeted + full pytest green. tests/test_session_archive_report.py
+        + tests/test_session_archive_cli.py -q -> 32 passed (was 29). Full suite uv
+        run pytest tests/ -q -> 345 passed (was 342, +3, 0 regressions in 342 baseline).
+    - criterion_index: 5
+      criterion_text: Parent execution.child_handoffs has >=1 completed entry with
+        real owned_files matching diff; no new external child YAML.
+      evidence: 'execution.child_handoffs has 1 completed entry: orch-v2-archive-rework3-tasklet
+        (sonnet, 3 owned files matching diff: lib/session_archive_report.py, orchctl,
+        tests/test_session_archive_report.py). delegate_required gate satisfied. NO
+        new external child handoff YAML created (ls .orchestrator/handoffs/ unchanged).'
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: 'Rework-3 closes 3 INVARIANT-level findings from post-approval adversarial
+    review (docs/issue-v2-session-archive-rework-churn.md) via 1 internal Agent(sonnet)
+    tasklet. (1) safe_write_text base_dir raised from reports_root to .orchestrator;
+    chain walk now covers runtime + session-archive-reports + <sid>. Defense-in-depth
+    _check_no_symlink_in_chain prevents makedirs from following symlinks before safe_write_text
+    runs. safe_write_text NOT weakened. (2) atomic filename reservation: _report_target_path
+    replaced with _reserve_unique_target using os.O_CREAT|O_EXCL|O_WRONLY; concurrent
+    same-second producers reserve distinct paths and cannot overwrite each other''s
+    reports. (3) parent help surface fixed: orchctl session --help ''archive'' line
+    now states V2 archive-report contract; both surfaces now uniform. Targeted 32
+    passed (29->32), full 345 passed (342->345, 0 regressions). 3 new tests prove
+    invariants: symlink ABOVE reports_root refused with no escape; pre-planted file
+    at first candidate path preserved + producer reserves -1; pre-planted at -1 too
+    -> reserves -2. NO new external child handoff YAML created.'
+  files_changed:
+  - 'lib/session_archive_report.py (MODIFY: _orchestrator_dir helper, _check_no_symlink_in_chain
+    helper, _reserve_unique_target replaces _report_target_path with O_CREAT|O_EXCL,
+    base_dir raised to orchestrator_dir)'
+  - 'orchctl (MODIFY: line 381 archive parser help= V2 wording)'
+  - 'tests/test_session_archive_report.py (MODIFY: +3 invariant tests)'
+  verification:
+  - uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -q -> 32 passed (was 29, +3 new invariant tests)
+  - uv run pytest tests/ -q -> 345 passed (was 342 baseline from rework-2, +3 new
+    tests, 0 regressions)
+  - uv run python orchctl session --help -> archive line says 'Archive a completed
+    session using a V2 archive-report YAML (see session archive-report)'; grep gc-audit/idle-snapshot
+    returns 0 matches across both surfaces
+  - uv run python orchctl session archive --help -> --from-report still shows 'V2
+    archive-report YAML produced by orchctl session archive-report <session-id>' (rework-2
+    wording unchanged)
+  - 'Smoke: uv run python orchctl session archive-report orch-worker-d-gc-aud-orch-room-gc-audit-v1
+    -> abs path under .orchestrator/runtime/session-archive-reports/<sid>/<ts>.yaml
+    exit 0; producer still functional after invariant tightening'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T06:02:25Z'
+  note: 'All 3 invariants closed within scope. Adversarial pre-review (oh-my-claudecode:code-reviewer,
+    separate from team-lead) independently verified: (1) containment HOLDS — two-layer
+    defense, full chain walk from /, both _check_no_symlink_in_chain pre-makedirs
+    and post-makedirs leaf check, safe_write_text base_dir raised to .orchestrator.
+    (2) atomic reservation HOLDS — O_CREAT|O_EXCL is kernel-atomic on Linux; tests
+    simulate race outcome via pre-planted files at first-candidate path which is the
+    kernel-correct way to test atomicity. (3) help uniformity HOLDS within rework-3
+    scope — both ''session --help'' and ''session archive --help'' show V2 wording,
+    neither mentions gc-audit/idle-snapshot for --from-report contract. CTO independent
+    verification: handoff status=completed, 1 internal tasklet (sonnet, 3 owned files),
+    pytest 345/345, both helps verified. Self-critique applied: ran adversarial pre-review
+    BEFORE approval (per docs/issue-v2-session-archive-rework-churn.md lesson). Follow-ups
+    for next operational round (NOT blockers): F1 gc-audit/idle-snapshot help cross-reference
+    to archive-report (discoverability, separate scope), F2 orchctl main() exit-code
+    propagation affects ALL commands not just archive (rework-1 era change, audit
+    needed). P3 items acceptable (orphan 0-byte reservation file on write failure,
+    no multi-process test). NO new external child YAML.'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'all 3 invariants closed within scope. adversarial pre-review (oh-my-claudecode:code-reviewer,
+      separate from team-lead) independently verified: (1) containment holds — two-layer
+      defense, full chain walk from /, both _check_no_symlink_in_chain pre-makedirs
+      and post-makedirs leaf check, safe_write_text base_dir raised to .orchestrator.
+      (2) atomic reservation holds — o_creat|o_excl is kernel-atomic on linux; tests
+      simulate race outcome via pre-planted files at first-candidate path which is
+      the kernel-correct way to test atomicity. (3) help uniformity holds within rework-3
+      scope — both ''session --help'' and ''session archive --help'' show v2 wording,
+      neither mentions gc-audit/idle-snapshot for --from-report contract. cto independent
+      verification: handoff status=completed, 1 internal tasklet (sonnet, 3 owned
+      files), pytest 345/345, both helps verified. self-critique applied: ran adversarial
+      pre-review before approval (per docs/issue-v2-session-archive-rework-churn.md
+      lesson). follow-ups for next operational round (not blockers): f1 gc-audit/idle-snapshot
+      help cross-reference to archive-report (discoverability, separate scope), f2
+      orchctl main() exit-code propagation affects all commands not just archive (rework-1
+      era change, audit needed). p3 items acceptable (orphan 0-byte reservation file
+      on write failure, no multi-process test). no new external child yaml.'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

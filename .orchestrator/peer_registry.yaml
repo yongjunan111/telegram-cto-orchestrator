@@ -55,3 +55,13 @@ peers:
   cwd: /home/dydwn/projects/telegram-cto-orchestrator
   capabilities: []
   status: available
+- id: orch-v2-archive-lead
+  name: V2 Session Archive Team Lead
+  type: worker
+  cwd: /home/dydwn/projects/telegram-cto-orchestrator
+  capabilities:
+  - team-lead
+  - delegation
+  - handoff-coordination
+  status: available
+  last_seen: null

@@ -1,0 +1,243 @@
+handoff:
+  id: orch-v2-archive-bundle
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-worker-d-gc-audit
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'Implement V2 archive BUNDLE WRITER and SESSION MARKER STAMPER in lib/session_archive_bundle.py.
+    Two pure functions, called by Child C''s orchestration AFTER Child A''s validate_archive_request
+    returns success. (1) write_archive_bundle(validated_context: Dict, repo_root:
+    str) -> Tuple[str, str]: writes <archive>.yaml + <archive>.md to .orchestrator/runtime/session-archives/<session-id>/<UTC-iso-timestamp>.{yaml,md}.
+    Both files share the same basename (timestamp-second precision). Returns (yaml_abs_path,
+    md_abs_path). Uses safe_write_text (containment + symlink-refuse + atomic rename).
+    The bundle YAML contains: session_summary, room_summary, handoff_summary, completion_state,
+    review_state, worker_evidence, completion_note, checkpoint_refs (list of paths),
+    gc_audit_or_idle_snapshot_refs, git_info (head_sha, dirty_state, branch, recent_commit_subjects),
+    next_action, wiki_candidates (list of {topic, hint, source_handoff_id} objects
+    — NEVER written to .orchestrator/wiki/*). The bundle MD is a human-readable rendering
+    of the same data. (2) stamp_session_archive_marker(session_id: str, archive_yaml_path:
+    str, from_report_path: str) -> None: appends archive: {status: archived, archived_at:
+    <UTC iso>, archive_path: <repo-relative path>, from_report: <os.path.realpath
+    of from_report_path>} to .orchestrator/runtime/sessions/<session-id>.yaml using
+    existing storage helpers (atomic write, safe). Touches session YAML ONLY — never
+    room or handoff YAML.'
+  scope: 'Allowed files ONLY: lib/session_archive_bundle.py (NEW), tests/test_session_archive_bundle.py
+    (NEW). Do NOT touch orchctl, lib/session_archive.py, lib/session_archive_validate.py,
+    lib/handoffs.py, lib/sessions.py (read-only is fine for understanding session
+    YAML schema; writes go through existing storage helpers, do not modify sessions.py
+    itself), lib/gc_audit.py, lib/idle_snapshot.py, lib/session_cleanup.py, docs/,
+    .orchestrator/, pyproject.toml. Other workers active — do not revert unrelated
+    dirty/untracked files.'
+  constraints:
+  - 'LOCKED RESULT ENUM (immutable across V2): archived | stale_report | unsafe_to_archive
+    | report_mismatch | parse_error | already_archived. This module does not return
+    enum values directly (it is invoked only AFTER validation succeeds), but if it
+    raises an exception during write, Child C''s orchestration must translate to ''parse_error''
+    or surface as a fatal.'
+  - 'LOCKED ARCHIVE PATH: .orchestrator/runtime/session-archives/<session-id>/<UTC-iso-timestamp>.yaml
+    + same basename .md. Use safe_write_text. NEVER write outside this directory (test
+    enforced via path-traversal attempt with crafted session_id — but session_id should
+    already be slug-validated by Child A, so this is defense-in-depth).'
+  - 'LOCKED SESSION YAML MARKER: archive: {status: ''archived'', archived_at: <UTC
+    iso ''Z'' suffix>, archive_path: <repo-relative path to the .yaml file>, from_report:
+    <os.path.realpath of report path>}. Marker writes use existing session YAML write
+    helpers (read state, mutate dict, atomic write). Marker MUST NOT clobber other
+    session YAML fields.'
+  - Bundle writer NEVER writes to .orchestrator/wiki/*. Wiki candidates live in the
+    bundle YAML/MD only. Verify with source grep test that '.orchestrator/wiki' does
+    not appear as a write target.
+  - Bundle writer NEVER calls tmux/send-keys/kill/respawn or any subprocess. Pure
+    file IO + dict serialization. Verify with source grep test.
+  - 'Bundle writer NEVER modifies room or handoff YAML. Verify with a hash test: room/handoff
+    YAML byte hashes before/after write_archive_bundle invocation are identical.'
+  - Marker stamper NEVER modifies room or handoff YAML. Same hash test for marker
+    stamper.
+  - 'Both functions are idempotent on side-effects in this sense: re-invoking write_archive_bundle
+    on the same validated_context produces a NEW bundle file (different timestamp)
+    but does not corrupt existing files. Re-invoking stamp_session_archive_marker
+    on a session that already has archive.status=''archived'' is the caller''s bug
+    — Child A''s validation should catch already_archived first; this module trusts
+    its inputs.'
+  - Use yaml.safe_dump for YAML output (no arbitrary Python objects). Use deterministic
+    key ordering for stable diffs. UTC timestamps in ISO-8601 with 'Z' suffix.
+  acceptance_criteria:
+  - write_archive_bundle creates .yaml + .md at .orchestrator/runtime/session-archives/<session-id>/<timestamp>.{yaml,md}
+    with all documented fields populated from validated_context.
+  - 'Bundle YAML keys: session_summary, room_summary, handoff_summary, completion_state,
+    review_state, worker_evidence, completion_note, checkpoint_refs, gc_audit_or_idle_snapshot_refs,
+    git_info, next_action, wiki_candidates. (Each may be null/empty if upstream context
+    lacks data, but the keys exist for stable consumption.)'
+  - Bundle MD is non-empty, readable, and references the same data without duplicating
+    it as raw YAML dump.
+  - stamp_session_archive_marker appends archive block with all 4 required fields,
+    preserves existing session YAML fields, and is atomic.
+  - 'Hash invariant: room and handoff YAML SHA-256 unchanged before vs after each
+    function (test enforced).'
+  - 'Source grep: no occurrences of .orchestrator/wiki, tmux, subprocess.Popen/run/call/check_call,
+    send-keys, requests/httpx/urllib (no network) in lib/session_archive_bundle.py.'
+  - 'Path traversal defense: write_archive_bundle with a crafted session_id like ''../etc/passwd''
+    is rejected by safe_write_text containment (or by an upstream check) — bundle
+    is NOT written outside the archive dir.'
+  - 'Targeted tests: ''uv run pytest tests/test_session_archive_bundle.py -v'' — at
+    least 10 cases covering bundle write, marker stamp, hash invariants, path traversal,
+    atomic marker write, idempotency-on-fields.'
+  - 'Full suite green: ''uv run pytest tests/ -q'' — count increases by ≥10, no regressions.'
+  report_back: 'Post in CTO Telegram thread when complete: (a) test count delta, (b)
+    cite hash-invariant test names, (c) confirm source grep for forbidden tokens (tmux,
+    subprocess, wiki, network) returns nothing meaningful, (d) any deviations from
+    locked contract.'
+  non_goals:
+  - Validation logic (Child A's job).
+  - CLI wiring or orchestration (Child C's job).
+  - Modifying lib/sessions.py or lib/storage.py (use existing public API; if helpers
+    are missing, escalate to CTO rather than editing those files).
+  - tmux/cron/idle-trigger/auto-archive — V3 or out-of-scope.
+  - Editing .orchestrator/wiki/* in any way.
+  - Removing checkpoints or other session artifacts as part of the archive. The marker
+    is informational; physical cleanup is a separate operator-led step.
+  invariants:
+  - No tmux, no subprocess, no network, no wiki writes. Verified by source grep test.
+  - No room/handoff YAML mutation. Verified by hash equality test before/after each
+    function.
+  - Bundle file written under .orchestrator/runtime/session-archives/<session-id>/
+    — never escapes via path traversal. Verified by attempting a crafted session_id
+    with '../' (and asserting the safe_write_text containment check rejects it; this
+    is defense-in-depth even though Child A validates upstream).
+  - 'Marker write is atomic: either the marker is fully present in the session YAML
+    or the file is unchanged. Verified by simulating an OS error mid-write and asserting
+    the original file is intact.'
+  failure_examples:
+  - Bundle YAML written to /tmp/ or anywhere outside .orchestrator/runtime/session-archives/.
+  - Marker write clobbers existing session YAML fields (e.g. last_active_at disappears).
+  - Bundle writer also creates .orchestrator/wiki/<topic>.md — wiki direct write violation.
+  - Bundle writer shells out to tmux to capture session pane state — subprocess invariant
+    violation.
+  - Marker write fails halfway and leaves a corrupted session YAML — atomic invariant
+    violation.
+  validation:
+  - 'Run targeted: uv run pytest tests/test_session_archive_bundle.py -v'
+  - 'Run full suite: uv run pytest tests/ -q (verify count and zero failures)'
+  - 'Source grep: grep -nE ''tmux|subprocess|wiki|requests|httpx|urllib'' lib/session_archive_bundle.py
+    — should match nothing meaningful (pure file/yaml IO only).'
+execution:
+  mode: direct
+  child_handoffs: []
+timestamps:
+  created_at: '2026-04-25T08:54:27Z'
+  claimed_at: '2026-04-25T09:03:28Z'
+  completed_at: '2026-04-25T09:04:01Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: 'Run targeted: uv run pytest tests/test_session_archive_bundle.py
+      -v'
+    evidence: tests/test_session_archive_bundle.py -v -> 15 passed
+  - validation_index: 2
+    validation_text: 'Run full suite: uv run pytest tests/ -q (verify count and zero
+      failures)'
+    evidence: uv run pytest tests/ -q -> 308 passed; baseline 293; delta +15
+  - validation_index: 3
+    validation_text: 'Source grep: grep -nE ''tmux|subprocess|wiki|requests|httpx|urllib''
+      lib/session_archive_bundle.py — should match nothing meaningful (pure file/yaml
+      IO only).'
+    evidence: grep matches only wiki_candidates locked field + Wiki Candidates MD
+      section heading; no .orchestrator/wiki write target, no tmux, no subprocess,
+      no requests/httpx/urllib
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: write_archive_bundle creates .yaml + .md at .orchestrator/runtime/session-archives/<session-id>/<timestamp>.{yaml,md}
+        with all documented fields populated from validated_context.
+      evidence: test_write_creates_yaml_and_md_at_locked_path PASSED — yaml+md created
+        under .orchestrator/runtime/session-archives/test-session/<ts>.{yaml,md}
+    - criterion_index: 2
+      criterion_text: 'Bundle YAML keys: session_summary, room_summary, handoff_summary,
+        completion_state, review_state, worker_evidence, completion_note, checkpoint_refs,
+        gc_audit_or_idle_snapshot_refs, git_info, next_action, wiki_candidates. (Each
+        may be null/empty if upstream context lacks data, but the keys exist for stable
+        consumption.)'
+      evidence: test_bundle_yaml_has_all_required_keys + test_bundle_yaml_keys_present_when_context_lacks_data
+        PASSED — all 12 locked keys present, null when context lacks them
+    - criterion_index: 3
+      criterion_text: Bundle MD is non-empty, readable, and references the same data
+        without duplicating it as raw YAML dump.
+      evidence: test_bundle_md_is_human_readable_not_raw_yaml PASSED — MD has section
+        headers, differs from yaml dump
+    - criterion_index: 4
+      criterion_text: stamp_session_archive_marker appends archive block with all
+        4 required fields, preserves existing session YAML fields, and is atomic.
+      evidence: test_marker_appends_4_fields_and_preserves_existing PASSED — archive
+        block has exactly status/archived_at/archive_path/from_report; custom_field,
+        last_active_at, peer_id preserved
+    - criterion_index: 5
+      criterion_text: 'Hash invariant: room and handoff YAML SHA-256 unchanged before
+        vs after each function (test enforced).'
+      evidence: test_room_handoff_hash_invariant_on_write_archive_bundle + test_room_handoff_hash_invariant_on_marker_stamper
+        PASSED — sha256 of room+handoff YAML unchanged before/after both functions
+    - criterion_index: 6
+      criterion_text: 'Source grep: no occurrences of .orchestrator/wiki, tmux, subprocess.Popen/run/call/check_call,
+        send-keys, requests/httpx/urllib (no network) in lib/session_archive_bundle.py.'
+      evidence: test_no_forbidden_tokens_in_source + test_module_does_not_import_subprocess_or_network_libs
+        PASSED — no .orchestrator/wiki, tmux, subprocess.{Popen,run,call,check_call},
+        send-keys, requests/httpx/urllib in source; module has no subprocess/requests/httpx/urllib
+        attribute
+    - criterion_index: 7
+      criterion_text: 'Path traversal defense: write_archive_bundle with a crafted
+        session_id like ''../etc/passwd'' is rejected by safe_write_text containment
+        (or by an upstream check) — bundle is NOT written outside the archive dir.'
+      evidence: test_path_traversal_session_id_is_rejected PASSED — session_id='../etc/passwd'
+        raises ValueError via safe_write_text containment chain check; no leaked files
+        under archive root
+    - criterion_index: 8
+      criterion_text: 'Targeted tests: ''uv run pytest tests/test_session_archive_bundle.py
+        -v'' — at least 10 cases covering bundle write, marker stamp, hash invariants,
+        path traversal, atomic marker write, idempotency-on-fields.'
+      evidence: 'tests/test_session_archive_bundle.py -v -> 15 passed (≥10): write_creates,
+        all_keys, keys_when_empty, md_human_readable, marker_4_fields, hash_invariant_write,
+        hash_invariant_marker, path_traversal, atomic_marker_on_error, distinct_bundles,
+        no_forbidden_tokens, archive_path_relative, from_report_realpath, no_imports,
+        deterministic_yaml'
+    - criterion_index: 9
+      criterion_text: 'Full suite green: ''uv run pytest tests/ -q'' — count increases
+        by ≥10, no regressions.'
+      evidence: full suite 308 passed; prior count 293; delta +15 (>=10); zero regressions
+    room: []
+  completed_by: orch-worker-d-gc-audit
+  summary: Implemented lib/session_archive_bundle.py with write_archive_bundle + stamp_session_archive_marker.
+    15 targeted tests pass; full suite 308/308 green (+15 from 293).
+  files_changed:
+  - lib/session_archive_bundle.py (NEW)
+  - tests/test_session_archive_bundle.py (NEW)
+  verification:
+  - uv run pytest tests/test_session_archive_bundle.py -v -> 15 passed
+  - uv run pytest tests/ -q -> 308 passed (delta +15)
+  - grep -nE 'tmux|subprocess|wiki|requests|httpx|urllib' lib/session_archive_bundle.py
+    -> only wiki_candidates field name + Wiki Candidates MD heading; no tmux/subprocess/network
+    refs
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T04:39:16Z'
+  note: absorbed by parent (orch-v2-session-archive) team-lead internal tasklet recovery
+    per CTO-authorized operating model correction (tmux session = responsibility boundary,
+    not task boundary). External worker output recovered and integrated by team lead;
+    integration smoke green. Closing review to clear stale open-review noise. Code-review
+    findings (timestamp collision, atomic-pair write) tracked in orch-v2-session-archive-rework-1.
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - absorbed by parent (orch-v2-session-archive) team-lead internal tasklet recovery
+      per cto-authorized operating model correction (tmux session = responsibility
+      boundary, not task boundary). external worker output recovered and integrated
+      by team lead; integration smoke green. closing review to clear stale open-review
+      noise. code-review findings (timestamp collision, atomic-pair write) tracked
+      in orch-v2-session-archive-rework-1.
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

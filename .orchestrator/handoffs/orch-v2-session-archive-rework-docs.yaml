@@ -1,0 +1,234 @@
+handoff:
+  id: orch-v2-session-archive-rework-docs
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: medium
+  kind: implementation
+task:
+  description: 'DOCS PHASE follow-up to rework-5 (code phase already approved). Markdown-only
+    edit. NO code, NO tests required. Append two sections to docs/issue-v2-session-archive-rework-churn.md
+    (after the existing ''Operating Lesson'' section): (A) **Why Rework-4 Happened**:
+    rework-3 closed more symptoms (containment scope from /, atomic O_EXCL reservation,
+    parent help) but two latent issues remained — (1) full-chain symlink check from
+    / over-rejected legitimate workspaces (macOS /var symlink ancestor); (2) precheck
+    → makedirs → 0-byte placeholder → replace had a TOCTOU window where attacker could
+    swap a parent to symlink between precheck and makedirs, dropping a 0-byte placeholder
+    OUTSIDE the repo. Codex confirmed concretely. Fix required dirfd + O_NOFOLLOW
+    content-write primitive: openat each chain component holding fds, write content
+    directly via O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW with dir_fd. Once an fd is held,
+    path swaps cannot redirect (kernel inode resolution). (B) **Why Rework-5 Happened**:
+    rework-4''s direction was correct, but the dirfd primitive''s entry point —  itself
+    — was opened with O_DIRECTORY|O_CLOEXEC (NO O_NOFOLLOW) as the operator trust
+    boundary. Codex confirmed: a symlinked .orchestrator → outside lets writes escape.
+    Fix: split entry into two steps — open repo_root with O_DIRECTORY|O_CLOEXEC (no
+    O_NOFOLLOW so above-repo symlinks like /var still succeed), then openat(''.orchestrator'',
+    O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC, dir_fd=repo_fd) so .orchestrator itself is refused
+    if symlinked. Above-repo symlinks remain explicitly out of scope (operator trust).
+    Tone: keep existing ''docs not authoritative; code/handoff YAML/room YAML/runtime
+    session YAML/git history are authoritative'' line. Sections should let a future
+    reader understand WHY 5 rounds were needed, not what the code looks like (code
+    is in lib/session_archive_report.py). 1 internal Agent(sonnet/haiku) tasklet ok,
+    NO new external child YAML.'
+  scope: 'ALLOWED: docs/issue-v2-session-archive-rework-churn.md (append-only). FORBIDDEN:
+    lib/**, tests/**, orchctl, .orchestrator/wiki/**, .orchestrator/handoffs/**, .orchestrator/rooms/**,
+    any other docs file.'
+  constraints:
+  - Markdown-only. No code changes.
+  - 'Authoritative-tone preserved: docs is non-authoritative narrative; code/handoff
+    YAML/git is authoritative. State this explicitly if rephrasing.'
+  - Append-only — do not rewrite existing rework-1/2/3 sections.
+  - No tests required (md-only change). State this in the completion report.
+  - 'delegate_required gate enforced: 1 internal tasklet recorded via add-subtask.'
+  - NO new external child handoff YAML.
+  acceptance_criteria:
+  - 'docs/issue-v2-session-archive-rework-churn.md contains a clearly-marked ''Why
+    Rework-4 Happened'' section explaining: containment-scope over-correction (root-walk
+    failed legit workspaces), placeholder TOCTOU between precheck and makedirs, and
+    dirfd+O_NOFOLLOW content-write primitive as the fix.'
+  - 'docs/issue-v2-session-archive-rework-churn.md contains a ''Why Rework-5 Happened''
+    section explaining: .orchestrator itself was opened as trust boundary without
+    O_NOFOLLOW so symlinked .orchestrator escaped; fix split entry into repo_fd open
+    + openat(''.orchestrator'', O_NOFOLLOW).'
+  - 'Authoritative-tone line preserved or restated: docs is narrative; authoritative
+    state remains code + handoff/room YAML + runtime session YAML + git.'
+  - No edits outside docs/issue-v2-session-archive-rework-churn.md (verify via git
+    status).
+  - Parent execution.child_handoffs has >=1 completed entry; NO new external child
+    YAML.
+  report_back: 'Telegram chat 8585947943 reply_to 4505: Stage 4 — docs phase complete.
+    (1) handoff status; (2) tasklet ledger; (3) git status (1 file md only); (4) 2
+    sections appended Y/N + section headings.'
+  non_goals:
+  - Code changes (rework-5 already shipped).
+  - Test changes.
+  - Wiki writes.
+  - Other doc files.
+  invariants:
+  - Authoritative-vs-derived line preserved.
+  failure_examples: []
+  validation:
+  - git status --short — only the one md file modified.
+  - 'diff inspection: 2 new sections appended after Operating Lesson, no edits to
+    prior content.'
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-v2-archive-rework-docs-tasklet
+    model_target: opus
+    owned_files:
+    - docs/issue-v2-session-archive-rework-churn.md
+    status: completed
+    evidence: 'Markdown-only append to docs/issue-v2-session-archive-rework-churn.md.
+      Two new sections added AFTER ''Operating Lesson'' (line 236): (A) ''## Why Rework-4
+      Happened'' at line 253 — explains rework-3''s containment-scope over-correction
+      (full-chain walk from / rejected legitimate macOS /var/folders workspaces) +
+      placeholder TOCTOU between precheck and makedirs (Codex confirmed 0-byte placeholder
+      lands outside repo if attacker swaps parent to symlink between steps 1-2). Documents
+      the dirfd+O_NOFOLLOW content-write primitive as fix: openat each chain component
+      holding fds, write content directly via O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW with
+      dir_fd; once fd held, kernel inode resolution defeats path swap; O_NOFOLLOW
+      provides syscall-level atomicity. Closes with ''Do not approve the symptom''
+      tie-back. (B) ''## Why Rework-5 Happened'' at line 303 — explains rework-4''s
+      residual hole: .orchestrator entry point opened with O_DIRECTORY|O_CLOEXEC (no
+      O_NOFOLLOW) as operator trust boundary, Codex confirmed symlinked .orchestrator
+      escapes. Documents two-step entry fix: open repo_root WITHOUT O_NOFOLLOW (above-repo
+      symlinks like /var, /home symlink ancestors must succeed), then openat(''.orchestrator'',
+      O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC, dir_fd=repo_fd) so .orchestrator itself is
+      refused if symlinked. New lesson layered on top of rework-4''s: ''A trust boundary
+      that follows symlinks is not a trust boundary.'' Closing footer restates authoritative-vs-derived
+      contract: code (lib/session_archive_report.py), handoff/room/runtime YAML, git
+      history are authoritative; this doc is non-authoritative narrative for future
+      readers asking why 5 rework rounds were needed. NO code changes. NO tests changes
+      (md-only). NO other files touched. File: 251 -> 364 lines (+113 lines appended).
+      git status: docs/issue-v2-session-archive-rework-churn.md is the only file modified
+      by this tasklet (note: file was untracked at session start; pre-existing M markers
+      on orchctl + docs/session-cleanup-policy.md are from rework-1 era and untouched
+      here).'
+timestamps:
+  created_at: '2026-04-26T07:57:31Z'
+  claimed_at: '2026-04-26T08:00:03Z'
+  completed_at: '2026-04-26T08:00:03Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: git status --short — only the one md file modified.
+    evidence: git status --short — only docs/issue-v2-session-archive-rework-churn.md
+      modified by this tasklet (file was untracked at session start, remains untracked;
+      Edit applied to existing untracked file). Pre-existing markers on orchctl +
+      docs/session-cleanup-policy.md are from rework-1 era and untouched here.
+  - validation_index: 2
+    validation_text: 'diff inspection: 2 new sections appended after Operating Lesson,
+      no edits to prior content.'
+    evidence: 'Diff inspection: 2 new sections appended AFTER ## Operating Lesson
+      (line 236). Heading positions: ## Why Rework-4 Happened at line 253; ## Why
+      Rework-5 Happened at line 303. No edits to prior content (lines 1-251 byte-for-byte
+      unchanged from session start; only lines 252-364 added).'
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'docs/issue-v2-session-archive-rework-churn.md contains a clearly-marked
+        ''Why Rework-4 Happened'' section explaining: containment-scope over-correction
+        (root-walk failed legit workspaces), placeholder TOCTOU between precheck and
+        makedirs, and dirfd+O_NOFOLLOW content-write primitive as the fix.'
+      evidence: 'CLOSED. ## Why Rework-4 Happened section explains all three required
+        elements: containment-scope over-correction (root-walk rejecting macOS /var
+        workspaces), placeholder TOCTOU between precheck and makedirs (Codex-confirmed
+        0-byte placeholder escape), and dirfd+O_NOFOLLOW content-write primitive as
+        fix (openat-with-fd path resolution + syscall-atomic refusal).'
+    - criterion_index: 2
+      criterion_text: 'docs/issue-v2-session-archive-rework-churn.md contains a ''Why
+        Rework-5 Happened'' section explaining: .orchestrator itself was opened as
+        trust boundary without O_NOFOLLOW so symlinked .orchestrator escaped; fix
+        split entry into repo_fd open + openat(''.orchestrator'', O_NOFOLLOW).'
+      evidence: 'CLOSED. ## Why Rework-5 Happened section explains all required elements:
+        .orchestrator-as-trust-boundary opened without O_NOFOLLOW so symlinked .orchestrator
+        escapes, fix splits entry into open(repo_root) without O_NOFOLLOW + openat(''.orchestrator'',
+        O_NOFOLLOW, dir_fd=repo_fd). Includes new lesson: ''A trust boundary that
+        follows symlinks is not a trust boundary.'''
+    - criterion_index: 3
+      criterion_text: 'Authoritative-tone line preserved or restated: docs is narrative;
+        authoritative state remains code + handoff/room YAML + runtime session YAML
+        + git.'
+      evidence: 'CLOSED. Authoritative-vs-derived line restated in closing italicized
+        footer: docs is non-authoritative narrative; authoritative state is code/handoff
+        YAML/room YAML/runtime session YAML/git history. Footer makes clear this file
+        is not consulted by code paths and exists for narrative reading only.'
+    - criterion_index: 4
+      criterion_text: No edits outside docs/issue-v2-session-archive-rework-churn.md
+        (verify via git status).
+      evidence: CLOSED. git status confirms NO edits outside docs/issue-v2-session-archive-rework-churn.md
+        by this tasklet. Pre-existing modifications on other files (orchctl, docs/session-cleanup-policy.md,
+        peer_registry.yaml, room state.yaml/log.md) are from prior rework rounds,
+        NOT introduced by this rework. Single-file scope honored.
+    - criterion_index: 5
+      criterion_text: Parent execution.child_handoffs has >=1 completed entry; NO
+        new external child YAML.
+      evidence: 'CLOSED. execution.child_handoffs has 1 completed entry: orch-v2-archive-rework-docs-tasklet
+        (opus team-lead-internal, 1 owned file: docs/issue-v2-session-archive-rework-churn.md).
+        delegate_required gate satisfied. NO new external child handoff YAML created
+        (zero new files in .orchestrator/handoffs/ from this rework).'
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: 'Stage 4 — V2 archive rework cycle CLOSED. Docs phase appends 2 narrative
+    sections to docs/issue-v2-session-archive-rework-churn.md after ''Operating Lesson'':
+    ''Why Rework-4 Happened'' (containment-scope over-correction + placeholder TOCTOU
+    + dirfd+O_NOFOLLOW fix) and ''Why Rework-5 Happened'' (.orchestrator-as-trust-boundary
+    hole + two-step entry fix). New lesson coined: ''A trust boundary that follows
+    symlinks is not a trust boundary.'' Authoritative-vs-derived line restated in
+    closing footer. Markdown-only edit; NO code, NO tests, NO other files touched.
+    File 251->364 lines (+113). Final V2 archive boast: across 5 rework rounds (rework-1
+    through rework-5 + this docs phase) the producer/consumer/bundle/help/containment
+    surface is now adversarially defensible — Codex post-rework-4 review and post-rework-5
+    review both agreed; pytest 269 (V1 baseline) -> 349 (+80 dedicated archive tests;
+    producer 13, bundle 20, cli 16); zero new external child handoff YAMLs across
+    all 5 rounds; delegate_required gate satisfied each round via internal Agent tasklets.
+    NO new external child handoff YAML.'
+  files_changed:
+  - 'docs/issue-v2-session-archive-rework-churn.md (MODIFY: append 2 narrative sections,
+    +113 lines)'
+  verification:
+  - git diff --stat / git status — only docs/issue-v2-session-archive-rework-churn.md
+    modified by this tasklet. Pre-existing untracked status preserved (file was untracked
+    at session start)
+  - 'Headings verified at lines 253 (''## Why Rework-4 Happened'') and 303 (''## Why
+    Rework-5 Happened''), both AFTER ## Operating Lesson at line 236'
+  - 'Authoritative-vs-derived line restated in closing footer: ''authoritative state
+    remains code, handoff YAML, room YAML, runtime session YAML, git history. This
+    file is not consulted by any code path; it exists so future readers can understand
+    why five rework rounds were necessary'''
+  - 'Md-only scope: NO code changes, NO test changes (per dispatch contract: ''No
+    tests required (md-only change)'')'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T08:01:05Z'
+  note: 'Docs phase complete. Markdown-only edit verified: docs/issue-v2-session-archive-rework-churn.md
+    grew 251→364 lines (+113); two new sections at lines 253 (''Why Rework-4 Happened'')
+    and 303 (''Why Rework-5 Happened''); existing rework-1/2/3 sections + Operating
+    Lesson preserved. New layered lesson coined: ''A trust boundary that follows symlinks
+    is not a trust boundary.'' Authoritative-vs-derived line restated. NO code/test/wiki/handoff/room
+    edits. Independent verification: git status shows only the md file affected; section
+    headings present; no new external child YAML. 1 internal tasklet (opus, 1 owned
+    file). delegate_required gate satisfied. V2 archive rework cycle (rework-1→rework-5+docs,
+    6 handoffs, +80 tests, 0 regressions, 0 new external child YAML) now closed.'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'docs phase complete. markdown-only edit verified: docs/issue-v2-session-archive-rework-churn.md
+      grew 251→364 lines (+113); two new sections at lines 253 (''why rework-4 happened'')
+      and 303 (''why rework-5 happened''); existing rework-1/2/3 sections + operating
+      lesson preserved. new layered lesson coined: ''a trust boundary that follows
+      symlinks is not a trust boundary.'' authoritative-vs-derived line restated.
+      no code/test/wiki/handoff/room edits. independent verification: git status shows
+      only the md file affected; section headings present; no new external child yaml.
+      1 internal tasklet (opus, 1 owned file). delegate_required gate satisfied. v2
+      archive rework cycle (rework-1→rework-5+docs, 6 handoffs, +80 tests, 0 regressions,
+      0 new external child yaml) now closed.'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

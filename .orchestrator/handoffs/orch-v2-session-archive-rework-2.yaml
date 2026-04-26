@@ -1,0 +1,184 @@
+handoff:
+  id: orch-v2-session-archive-rework-2
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'TINY V2 follow-up rework. 2 fixes only. YOU ARE TEAM LEAD = same responsibility
+    boundary as rework-1 (reuse same tmux pane via dispatch reuse). Use ONE internal
+    Agent(sonnet) tasklet for both fixes (same touched files cluster). NO new external
+    child YAML (CTO directive). Record one add-subtask entry on this handoff. Two
+    fixes: (1) [P2] lib/session_archive_report.py: pass safe_write_text base_dir =
+    reports ROOT (.orchestrator/runtime/session-archive-reports) instead of session-specific
+    subdir; target = <reports-root>/<session-id>/<timestamp>.yaml. Add regression
+    test that creates a symlinked parent in the chain BEFORE session dir exists, verifies
+    write is refused (or otherwise proves no escape). (2) [P3] orchctl: archive --from-report
+    help string change from ''promoted gc-audit or idle-snapshot report YAML'' to
+    ''V2 archive-report YAML produced by orchctl session archive-report <session-id>''.'
+  scope: 'ALLOWED: lib/session_archive_report.py, orchctl (single help-string edit),
+    tests/test_session_archive_report.py (add regression test). FORBIDDEN: anything
+    else. Do NOT touch lib/session_archive.py, lib/session_archive_bundle.py, lib/session_archive_validate.py
+    unless required to thread base_dir change (unlikely).'
+  constraints:
+  - Tiny scope. No feature expansion. No new flags, no new modules, no idle/cron/hooks/wiki
+    writes.
+  - No new external child handoff YAML files. Single internal Agent(sonnet) tasklet
+    only. Record via 'orchctl handoff add-subtask orch-v2-session-archive-rework-2
+    --id <slug> --model-target sonnet --owned-file ... --status completed --evidence
+    ...'.
+  - delegate_required gate enforced. Need >=1 completed child_handoffs entry.
+  - 'Trust-but-verify before add-subtask: targeted pytest must pass.'
+  acceptance_criteria:
+  - 'P2 fix: lib/session_archive_report.py uses reports-root as safe_write_text base_dir.
+    Regression test exists that proves symlink-in-parent-chain (BEFORE session dir
+    creation) cannot escape the reports root.'
+  - 'P3 fix: orchctl ''session archive --from-report'' help text says ''V2 archive-report
+    YAML produced by orchctl session archive-report <session-id>'' (or equivalent
+    unambiguous wording). Verified via ''orchctl session archive --help'' output.'
+  - 'Targeted pytest green: ''uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -q''. Full suite still 341+ green (no regressions).'
+  - Parent execution.child_handoffs has >=1 completed entry with real owned_files
+    matching diff.
+  report_back: 'Telegram chat 8585947943 reply_to 4488: changed files (git diff --stat),
+    tests run + result, both finding closed Y/N, smoke check on archive-report producer
+    still works.'
+  non_goals:
+  - V3 features. cleanup automation. archive idle trigger. tmux subprocess. wiki direct
+    write.
+  - New external child handoff YAML.
+  invariants:
+  - Locked result enum + CLI surface unchanged.
+  - safe_write_text containment for derived writes.
+  failure_examples: []
+  validation:
+  - uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -v after fix.
+  - uv run pytest tests/ -q (full).
+  - orchctl session archive --help -> verify new help string.
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-v2-archive-rework2-tasklet
+    model_target: sonnet
+    owned_files:
+    - lib/session_archive_report.py
+    - orchctl
+    - tests/test_session_archive_report.py
+    status: completed
+    evidence: 'Two tiny fixes batched. (1) lib/session_archive_report.py: replaced
+      _reports_base_dir(repo_root, session_id) with _reports_root_dir(repo_root);
+      call site now passes reports_root as safe_write_text base_dir, with target_path
+      = <reports-root>/<sid>/<ts>.yaml. safe_write_text now walks the chain from session
+      subdir up to reports-root and refuses any symlink (previous code skipped chain
+      check because target_parent == base_dir). Net +2/-2. (2) orchctl: archive --from-report
+      help text changed to ''V2 archive-report YAML produced by orchctl session archive-report
+      <session-id>''. Net +1/-1. (3) tests/test_session_archive_report.py: NEW test_symlink_in_parent_chain_before_session_dir_is_refused.
+      Pre-plants a symlink at <reports-root>/<sid> pointing to an outside-repo dir
+      BEFORE first archive-report invocation; calls cmd_session_archive_report; asserts
+      SystemExit code 1 + outside dir untouched (no escape). pytest tests/test_session_archive_report.py
+      tests/test_session_archive_cli.py -q -> 29 passed (was 28, +1 new). Full uv
+      run pytest tests/ -q -> 342 passed (was 341, no regressions). Smoke: orchctl
+      session archive-report fs-worker-1-first-shovel-discovery-1 emitted abs path
+      under .orchestrator/runtime/session-archive-reports/<sid>/<ts>.yaml as expected.'
+timestamps:
+  created_at: '2026-04-26T05:08:42Z'
+  claimed_at: '2026-04-26T05:18:50Z'
+  completed_at: '2026-04-26T05:18:50Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+      -v after fix.
+    evidence: Targeted pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+      -v after fix -> 29 passed including the new regression test
+  - validation_index: 2
+    validation_text: uv run pytest tests/ -q (full).
+    evidence: Full pytest tests/ -q -> 342 passed (no regression vs rework-1 baseline
+      341)
+  - validation_index: 3
+    validation_text: orchctl session archive --help -> verify new help string.
+    evidence: orchctl session archive --help shows updated --from-report wording verbatim
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'P2 fix: lib/session_archive_report.py uses reports-root as
+        safe_write_text base_dir. Regression test exists that proves symlink-in-parent-chain
+        (BEFORE session dir creation) cannot escape the reports root.'
+      evidence: P2 FIXED. lib/session_archive_report.py uses reports-root (.orchestrator/runtime/session-archive-reports)
+        as safe_write_text base_dir; target = <root>/<sid>/<ts>.yaml. tests/test_session_archive_report.py::test_symlink_in_parent_chain_before_session_dir_is_refused
+        pre-plants symlink at <reports-root>/<sid> pointing outside repo BEFORE producer
+        runs; producer raises SystemExit(1); outside dir empty after attempt.
+    - criterion_index: 2
+      criterion_text: 'P3 fix: orchctl ''session archive --from-report'' help text
+        says ''V2 archive-report YAML produced by orchctl session archive-report <session-id>''
+        (or equivalent unambiguous wording). Verified via ''orchctl session archive
+        --help'' output.'
+      evidence: 'P3 FIXED. orchctl ''session archive --from-report'' help string now:
+        ''V2 archive-report YAML produced by orchctl session archive-report <session-id>''.
+        Verified via ''orchctl session archive --help'' output.'
+    - criterion_index: 3
+      criterion_text: 'Targeted pytest green: ''uv run pytest tests/test_session_archive_report.py
+        tests/test_session_archive_cli.py -q''. Full suite still 341+ green (no regressions).'
+      evidence: Targeted pytest green (29 passed) + full suite green (342 passed;
+        was 341, +1 regression test, no regression in 341 baseline).
+    - criterion_index: 4
+      criterion_text: Parent execution.child_handoffs has >=1 completed entry with
+        real owned_files matching diff.
+      evidence: 'execution.child_handoffs has 1 completed entry: orch-v2-archive-rework2-tasklet
+        (sonnet, 3 owned files matching diff). delegate_required gate satisfied.'
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: Tiny rework-2 ships 2 fixes via single internal Agent(sonnet) tasklet.
+    (P2) lib/session_archive_report.py safe_write_text base_dir is now reports-root
+    (not session subdir) so chain-walk catches pre-existing symlinks at <reports-root>/<sid>;
+    regression test pre-plants such symlink and asserts refusal + no escape. (P3)
+    orchctl session archive --from-report help text updated to 'V2 archive-report
+    YAML produced by orchctl session archive-report <session-id>'. Full pytest 341->342
+    (+1 regression test, 0 regressions). Smoke confirmed producer still emits abs
+    path under .orchestrator/runtime/session-archive-reports/<sid>/<ts>.yaml. delegate_required
+    gate satisfied by 1 completed child_handoffs entry. NO new external child handoff
+    YAML created.
+  files_changed:
+  - 'lib/session_archive_report.py (MODIFY: _reports_base_dir -> _reports_root_dir;
+    safe_write_text base_dir now reports-root)'
+  - 'orchctl (MODIFY: --from-report help string)'
+  - 'tests/test_session_archive_report.py (MODIFY: +1 regression test)'
+  verification:
+  - uv run pytest tests/test_session_archive_report.py tests/test_session_archive_cli.py
+    -q -> 29 passed (was 28, +1)
+  - uv run pytest tests/ -q -> 342 passed (was 341 from rework-1, +1 new test, 0 regressions)
+  - uv run python orchctl session archive --help -> --from-report help shows 'V2 archive-report
+    YAML produced by orchctl session archive-report'
+  - 'Producer smoke: orchctl session archive-report fs-worker-1-first-shovel-discovery-1
+    -> /home/dydwn/projects/telegram-cto-orchestrator/.orchestrator/runtime/session-archive-reports/fs-worker-1-first-shovel-discovery-1/<ts>.yaml
+    (abs path under reports-root, structure unchanged)'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T05:19:25Z'
+  note: 'Both findings closed. P2: safe_write_text base_dir = reports-root (chain
+    walk now catches symlink-in-parent before session dir exists); regression test
+    test_symlink_in_parent_chain_before_session_dir_is_refused added. P3: --from-report
+    help text updated to V2 archive-report wording. CTO independent verification:
+    pytest 13/13 archive-report (was 12, +1 regression), full suite 342/342, help
+    string verified, ledger has 1 completed internal tasklet (sonnet, 3 owned files
+    matching diff). delegate_required gate satisfied. NO new external child YAML.'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'both findings closed. p2: safe_write_text base_dir = reports-root (chain walk
+      now catches symlink-in-parent before session dir exists); regression test test_symlink_in_parent_chain_before_session_dir_is_refused
+      added. p3: --from-report help text updated to v2 archive-report wording. cto
+      independent verification: pytest 13/13 archive-report (was 12, +1 regression),
+      full suite 342/342, help string verified, ledger has 1 completed internal tasklet
+      (sonnet, 3 owned files matching diff). delegate_required gate satisfied. no
+      new external child yaml.'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

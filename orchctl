@@ -25,6 +25,8 @@ from lib.peers import cmd_peer_add, cmd_peer_list, cmd_peer_show, cmd_peer_remov
 from lib.wiki_suggest import cmd_handoff_wiki_suggest
 from lib.gc_audit import cmd_room_gc_audit
 from lib.idle_snapshot import cmd_room_idle_snapshot
+from lib.session_archive import cmd_session_archive
+from lib.session_archive_report import cmd_session_archive_report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -369,6 +371,20 @@ def build_parser() -> argparse.ArgumentParser:
     sboot_p.add_argument("session_id", metavar="<session-id>")
     sboot_p.set_defaults(func=cmd_session_bootstrap)
 
+    # session archive-report
+    sarchreport_p = session_sub.add_parser("archive-report",
+        help="Produce a V2-contract archive report YAML for a completed session.")
+    sarchreport_p.add_argument("session_id", metavar="<session-id>")
+    sarchreport_p.set_defaults(func=cmd_session_archive_report)
+
+    # session archive
+    sarchive_p = session_sub.add_parser("archive", help="Archive a completed session using a V2 archive-report YAML (see 'session archive-report')")
+    sarchive_p.add_argument("session_id", metavar="<session-id>")
+    sarchive_p.add_argument("--from-report", required=True, dest="from_report",
+                            metavar="<absolute-path>",
+                            help="V2 archive-report YAML produced by orchctl session archive-report <session-id>")
+    sarchive_p.set_defaults(func=cmd_session_archive)
+
     # task subcommand
     task_p = sub.add_parser("task", help="Task automation commands")
     task_sub = task_p.add_subparsers(dest="task_command", metavar="<subcommand>")
@@ -441,7 +457,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_parser()
     args = parser.parse_args()
-    args.func(args)
+    rc = args.func(args)
+    sys.exit(rc if isinstance(rc, int) else 0)
 
 
 if __name__ == "__main__":

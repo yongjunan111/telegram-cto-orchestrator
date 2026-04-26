@@ -4,7 +4,7 @@ room:
   status: active
   program_id: null
   created_at: '2026-04-24T11:30:12Z'
-  updated_at: '2026-04-25T08:09:33Z'
+  updated_at: '2026-04-26T08:01:05Z'
 context:
   goal: Foundation fixes, ADR governance, dispatch degraded launch surfacing, and
     read-only room gc-audit V1
