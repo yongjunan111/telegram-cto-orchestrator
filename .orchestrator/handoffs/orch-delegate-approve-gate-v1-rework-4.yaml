@@ -1,0 +1,444 @@
+handoff:
+  id: orch-delegate-approve-gate-v1-rework-4
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'REWORK-4 of approve-gate. Codex independently reviewed approved rework-3
+    and reproduced 1 P2 + 1 P3. THIS IS THE ARTIFACT-BOUNDARY CLOSURE PASS, not another
+    narrow patch. YOU ARE TEAM LEAD. Same pane. Internal Agent(sonnet) tasklet OK.
+    NO new external child YAML. **P2 reader/writer asymmetry**: writer (_write_adversarial_review_atomic)
+    correctly rejects symlinked adversarial-reviews via dirfd descent + O_NOFOLLOW
+    from RUNTIME_DIR. Reader (_find_valid_adversarial_review) computes realpath containment
+    under the apparent path, but if ''runtime/adversarial-reviews'' itself is a symlink
+    to outside-repo dir containing valid ''ship-as-is'' artifact, realpath-resolved
+    root matches realpath-resolved artifact → approve PASSES. Codex reproduced. Required
+    fix: reader rejects symlink at adversarial-reviews CHILD itself (matching writer).
+    Above-runtime symlinks (e.g., RUNTIME_DIR itself or ancestors) MUST keep working
+    — this is the rework-2 F1 invariant. Do NOT reintroduce root-path overblocking.
+    The contract is: from storage.RUNTIME_DIR (which may itself be under symlinked
+    ancestors), the child ''adversarial-reviews'', ''<handoff-id>'', and final ''.md''
+    artifact must NOT be symlinks. Above-runtime symlinks remain allowed. Reader and
+    writer share the SAME boundary contract — symmetric. **P3 policy doc drift**:
+    docs/policy-delegate-required-approve-gate.md still says filesystem mtime is not
+    consulted. Code (rework-2) now requires st_mtime strictly > timestamps.completed_at.
+    Update doc + any CLI/gate error wording so operators see real contract. **MANDATORY
+    before coding: boundary-symmetry risk map**. For each fix list: (1) writer''s
+    view of the boundary (which path components must NOT be symlinks), (2) reader''s
+    view (must match), (3) which test guarantees symmetry, (4) which test guarantees
+    no overblocking (above-runtime symlinks pass), (5) what NEW asymmetry could the
+    fix introduce.'
+  scope: 'ALLOWED: lib/handoffs.py (reader hardening — match writer''s symlink rejection
+    at adversarial-reviews/<hid>/.md), tests/test_delegate_approve_gate.py (Codex
+    repro test + positive symmetry test + regression keepers), docs/policy-delegate-required-approve-gate.md
+    (mtime contract update). FORBIDDEN: V2 archive code, V3 idle, dispatch/sessions/gc/cleanup,
+    peer schema, .orchestrator/wiki, push, new external child YAML, orchctl (CLI surface
+    unchanged), writer logic (already correct, do NOT touch unless reader sharing
+    common helper).'
+  constraints:
+  - PRODUCE BOUNDARY-SYMMETRY RISK MAP BEFORE CODING. 5 fields per fix. Without map
+    = approve fails.
+  - 'Anti-pattern blocked: narrow test-only fix. Reviewer rejects if asymmetry is
+    moved/disguised rather than removed.'
+  - Reader and writer MUST share the same boundary contract. Either via shared helper
+    or via test-verified parity.
+  - Above-runtime symlinks must continue to work (rework-2 F1 invariant). Do NOT reintroduce
+    root-path overblocking.
+  - Realpath containment alone is insufficient — that's the bypass. Use islink/lstat
+    at each component below RUNTIME_DIR.
+  - delegate_required gate enforced. NO new external child YAML.
+  - 'Trust-but-verify: each new regression test must demonstrate pre-fix-FAIL post-fix-PASS.'
+  - 'Self-bootstrap: rework-4 own approve must pass via the new (symmetric) gate.'
+  - All prior rework-1/2/3 invariants preserved (5 strict frontmatter, dirfd descent,
+    mtime > completed_at, per-entry owned_files, publication-state machine, F4 collision
+    retry).
+  - Do NOT stage/commit/push. CTO/Codex handles after independent review.
+  acceptance_criteria:
+  - 'INVARIANT: reader and writer share the same artifact-boundary contract. Below
+    storage.RUNTIME_DIR, the components ''adversarial-reviews'', ''<handoff-id>'',
+    and final ''.md'' MUST NOT be symlinks for either read or write. Above-runtime
+    symlink ancestors MUST continue to succeed for both reader and writer.'
+  - 'INVARIANT [Codex P2 repro]: pre-plant runtime/adversarial-reviews as symlink
+    to outside-repo dir containing a frontmatter-valid ''ship-as-is'' artifact for
+    the current handoff with mtime > completed_at and reviewer=cto != assignee/completer.
+    Pre-fix: ''orchctl handoff approve'' PASSES (BUG). Post-fix: approve BLOCKS with
+    structured ''missing: adversarial review'' or new ''symlinked adversarial-reviews
+    root'' message. Outside dir untouched.'
+  - 'INVARIANT [positive symmetry]: storage.RUNTIME_DIR itself as symlink to real
+    runtime dir (e.g., /var-on-macOS or operator-chosen storage path) — helper writes
+    successfully AND approve accepts a valid artifact. The ''adversarial-reviews''
+    child must be a real directory, not a symlink.'
+  - 'INVARIANT [regression keeper - per-handoff dir symlink]: ''adversarial-reviews/<handoff-id>''
+    as symlink → both helper write and approve fail (rework-2 invariant preserved).'
+  - 'INVARIANT [regression keeper - .md artifact symlink]: final .md as symlink →
+    both helper write and approve fail.'
+  - 'INVARIANT [regression keeper - mtime]: stale or equal mtime fails approve; fresh
+    mtime > completed_at passes. _utc_iso_to_epoch malformed fails closed.'
+  - 'INVARIANT [regression keeper - publication state]: partial write / fsync fail
+    leave no approveable .md (rework-3 invariant preserved). Same-second collision
+    preserves both artifacts (rework-1 F4 invariant).'
+  - 'INVARIANT [policy doc updated]: docs/policy-delegate-required-approve-gate.md
+    states the actual mtime contract: artifact st_mtime must be strictly > handoff
+    timestamps.completed_at. Any ''mtime is not consulted'' wording removed/replaced.
+    CLI gate error wording (if it mentions mtime) consistent.'
+  - Boundary-symmetry risk map present in completion report with 5 fields per fix
+    per CTO mandate.
+  - 'Targeted pytest green: ''uv run pytest tests/test_delegate_approve_gate.py -q''
+    (>=50 + new tests).'
+  - 'Full pytest green: ''uv run pytest tests -q'' (>=399 + new tests, 0 regressions).'
+  - Parent execution.child_handoffs has >=1 completed entry with non-empty owned_files
+    (every string non-empty) AND non-empty evidence; NO new external child YAML.
+  report_back: 'Telegram chat 8585947943 reply_to 4520: STAGED — (S1) handoff create+dispatch
+    ack with confirmation team-lead read the boundary-symmetry risk map mandate; (S2)
+    tasklet done + boundary-symmetry risk map (5 fields per fix) + targeted/full pytest
+    + per-finding pre-fix-FAIL post-fix-PASS evidence; (S3) adversarial pre-review
+    (must explicitly check boundary-symmetry risk map AND verify Codex P2 repro test
+    passes post-fix and fails pre-fix) + CTO approve via new (symmetric) gate. Final
+    report MUST include: rework-4 handoff id, team-lead/subtask evidence, exact code/doc/test
+    files touched, how each finding is closed, test output summary, adversarial review
+    artifact path, residual risks even if low.'
+  non_goals:
+  - V3 idle archive automation.
+  - Cost/quota optimization.
+  - V2 archive modification.
+  - Peer schema changes.
+  - Writer logic modification (already correct).
+  - New helper subcommand or CLI surface change.
+  - Architectural rework beyond bug fixes.
+  - New external child handoff YAML.
+  - Stage/commit/push.
+  invariants:
+  - All V1 + rework-1 + rework-2 + rework-3 invariants preserved.
+  - Helper CLI signature unchanged.
+  - Authoritative-vs-derived split preserved.
+  - Reader and writer boundary contract is symmetric and explicitly tested.
+  - Above-runtime symlinks continue to be allowed (no root-path overblocking).
+  failure_examples: []
+  validation:
+  - uv run pytest tests/test_delegate_approve_gate.py -v after tasklet — at least
+    Codex repro + positive symmetry + 5+ regression keepers, each pre-fix behavior
+    demonstrated where relevant.
+  - uv run pytest tests -q (full).
+  - 'Codex P2 repro: pre-plant runtime/adversarial-reviews symlinked to outside, valid
+    artifact inside, reviewer=cto, mtime > completed_at → approve must fail post-fix
+    (passes pre-fix).'
+  - 'Positive symmetry: storage.RUNTIME_DIR symlink to real runtime, adversarial-reviews
+    real dir → write+approve both succeed.'
+  - 'Self-bootstrap: rework-4 own approve must succeed via the symmetric reader.'
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-delegate-approve-gate-v1-rework-4-tasklet
+    model_target: sonnet
+    owned_files:
+    - lib/handoffs.py
+    - tests/test_delegate_approve_gate.py
+    - docs/policy-delegate-required-approve-gate.md
+    status: completed
+    evidence: 'TDD-disciplined cohesive tasklet closing 1 P2 reader/writer asymmetry
+      + 1 P3 doc drift Codex reproduced post-rework-3. Boundary-symmetry risk map
+      produced BEFORE coding per CTO mandate (5 fields per fix). lib/handoffs.py:_find_valid_adversarial_review
+      at lines 1834-1868 — added os.path.islink(adv_reviews_root) check BEFORE the
+      existing realpath containment, matching writer''s O_NOFOLLOW openat at the same
+      component. Existing islink checks on <hid> per-handoff dir (line 1853) and final
+      .md (line ~1880) preserved. Realpath containment kept as defense-in-depth for
+      ../ traversal + brief TOCTOU window. Above-runtime symlinks (RUNTIME_DIR or
+      its ancestors) intentionally NOT checked — rework-2 F1 invariant preserved (operator
+      trust boundary; macOS /var → /private/var must succeed). Writer logic UNCHANGED.
+      docs/policy-delegate-required-approve-gate.md lines 33-37 — replaced drifted
+      ''filesystem mtime is not consulted'' with actual two-part contract: (a) frontmatter
+      review_target_completed_at == timestamps.completed_at primary freshness check,
+      (b) artifact st_mtime strictly > timestamps.completed_at (UTC; rework-2 hardening).
+      +3 tests in tests/test_delegate_approve_gate.py: test_rework4_codex_p2_runtime_adversarial_reviews_symlink_blocks_approve
+      (Codex P2 repro: pre-plant runtime/adversarial-reviews → outside dir with valid
+      ''ship-as-is'' artifact for current handoff with mtime > completed_at and reviewer=cto;
+      pre-fix: approve PASSES BUG; post-fix: approve BLOCKS), test_rework4_runtime_dir_symlink_succeeds_with_real_adversarial_reviews
+      (positive symmetry: place RUNTIME_DIR ancestor under symlinked path while adversarial-reviews
+      stays a real dir; helper writes + approve passes — verifies no above-runtime
+      overblocking), test_rework4_reader_writer_symmetric_at_adversarial_reviews_child
+      (both helper write and approve fail when adversarial-reviews is symlinked —
+      explicit symmetry assertion). RED-phase TDD evidence: Codex P2 repro test FAILED
+      pre-fix (approve passed on outside-repo artifact); reader_writer_symmetric test
+      FAILED pre-fix (writer rejected via O_NOFOLLOW, reader passed via realpath silently
+      following — asymmetry confirmed); runtime_dir_symlink test PASSED pre-fix (correct:
+      above-runtime symlinks already worked, no regression introduced). All 3 PASS
+      post-fix. Targeted pytest tests/test_delegate_approve_gate.py -q: 53 passed
+      (was 50, +3). Full pytest tests/ -q: 402 passed (was 399, +3, 0 regressions).
+      All V1+rework-1+rework-2+rework-3 invariants preserved (5 strict frontmatter,
+      dirfd descent, mtime > completed_at, per-entry owned_files, publication-state
+      machine, F4 collision retry). Helper smoke unchanged. BOUNDARY-SYMMETRY RISK
+      MAP: Component RUNTIME_DIR + ancestors — symlink allowed YES — writer plain
+      os.open no O_NOFOLLOW — reader implicit accept. Component runtime/adversarial-reviews
+      — symlink allowed NO — writer _open_or_create_dir_nofollow O_NOFOLLOW openat
+      — reader os.path.islink reject (NEW rework-4 fix at line 1843). Component <hid>
+      per-handoff dir — symlink NO — writer O_NOFOLLOW openat — reader os.path.islink
+      reject (preserved line 1853). Component final .md — symlink NO — writer O_NOFOLLOW
+      open with O_CREAT|O_EXCL — reader os.path.islink reject (preserved line ~1880).
+      Symmetry tests guarantee: Codex P2 repro covers asymmetric component; reader_writer_symmetric
+      explicitly asserts both surfaces refuse. No-overblocking test: runtime_dir_symlink_succeeds_with_real_adversarial_reviews
+      verifies above-runtime symlinks still work for both reader and writer. New asymmetry
+      risk: reader uses path-string islink not dirfd O_NOFOLLOW (TOCTOU window between
+      islink and listdir), mitigated by realpath containment as secondary check; full
+      dirfd refactor of reader is larger scope expansion deferred. Risk accepted,
+      documented.'
+timestamps:
+  created_at: '2026-04-27T14:22:21Z'
+  claimed_at: '2026-04-27T14:36:16Z'
+  completed_at: '2026-04-27T14:36:16Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: uv run pytest tests/test_delegate_approve_gate.py -v after tasklet
+      — at least Codex repro + positive symmetry + 5+ regression keepers, each pre-fix
+      behavior demonstrated where relevant.
+    evidence: 'Targeted pytest tests/test_delegate_approve_gate.py -v after tasklet
+      -> 53 passed (50 V1+rework-1/2/3 + 3 new rework-4). RED-phase TDD: Codex P2
+      repro test demonstrably FAILED pre-fix (proves bug), PASSED post-fix (proves
+      fix). Reader/writer symmetry test FAILED pre-fix (proves asymmetry), PASSED
+      post-fix (proves symmetry).'
+  - validation_index: 2
+    validation_text: uv run pytest tests -q (full).
+    evidence: Full pytest tests/ -q -> 402 passed (was 399, +3, 0 regressions). All
+      V1 + rework-1/2/3 invariants preserved.
+  - validation_index: 3
+    validation_text: 'Codex P2 repro: pre-plant runtime/adversarial-reviews symlinked
+      to outside, valid artifact inside, reviewer=cto, mtime > completed_at → approve
+      must fail post-fix (passes pre-fix).'
+    evidence: 'Codex P2 repro: pre-plant runtime/adversarial-reviews symlinked to
+      /tmp/<t>/outside containing <hid>/<ts>.md with valid frontmatter (handoff_id,
+      verdict=ship-as-is, review_target_completed_at == handoff completed_at, reviewer=cto
+      != assignee/completer) and mtime > completed_at via os.utime. All other approve-gate
+      evidence in place. Pre-fix: approve PASSES (BUG — realpath silently followed
+      symlink). Post-fix: approve BLOCKS via new islink check on adv_reviews_root.
+      Outside dir contents untouched.'
+  - validation_index: 4
+    validation_text: 'Positive symmetry: storage.RUNTIME_DIR symlink to real runtime,
+      adversarial-reviews real dir → write+approve both succeed.'
+    evidence: 'Positive symmetry: place RUNTIME_DIR ancestor under symlinked path
+      (e.g., tmp/sym-root → tmp/real-root), put runtime/adversarial-reviews/<hid>/
+      as REAL directories under sym-root. Helper writes valid artifact (succeeds via
+      writer''s plain os.open on RUNTIME_DIR + O_NOFOLLOW openat on adversarial-reviews
+      child). Approve accepts the artifact (succeeds via reader''s implicit accept
+      on RUNTIME_DIR + new islink check on adversarial-reviews child which is real).
+      Above-runtime symlinks NOT overblocked.'
+  - validation_index: 5
+    validation_text: 'Self-bootstrap: rework-4 own approve must succeed via the symmetric
+      reader.'
+    evidence: Self-bootstrap — this rework-4's approve will pass through the now-symmetric
+      gate. Tasklet has owned_files=['lib/handoffs.py', 'tests/test_delegate_approve_gate.py',
+      'docs/policy-delegate-required-approve-gate.md'] — all isinstance(str) and stripped
+      non-empty per F3. CTO will write adversarial review with mtime > timestamps.completed_at
+      via the helper, then approve via the symmetric gate.
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'INVARIANT: reader and writer share the same artifact-boundary
+        contract. Below storage.RUNTIME_DIR, the components ''adversarial-reviews'',
+        ''<handoff-id>'', and final ''.md'' MUST NOT be symlinks for either read or
+        write. Above-runtime symlink ancestors MUST continue to succeed for both reader
+        and writer.'
+      evidence: CLOSED [boundary symmetry]. Reader's os.path.islink(adv_reviews_root)
+        check at line 1843 matches writer's O_NOFOLLOW openat at the same component.
+        Reader's existing checks on <hid> (islink line 1853) and .md (islink line
+        ~1880) preserved. Above-runtime symlinks (RUNTIME_DIR + ancestors) remain
+        allowed for both reader and writer.
+    - criterion_index: 2
+      criterion_text: 'INVARIANT [Codex P2 repro]: pre-plant runtime/adversarial-reviews
+        as symlink to outside-repo dir containing a frontmatter-valid ''ship-as-is''
+        artifact for the current handoff with mtime > completed_at and reviewer=cto
+        != assignee/completer. Pre-fix: ''orchctl handoff approve'' PASSES (BUG).
+        Post-fix: approve BLOCKS with structured ''missing: adversarial review'' or
+        new ''symlinked adversarial-reviews root'' message. Outside dir untouched.'
+      evidence: 'CLOSED [Codex P2 repro]. test_rework4_codex_p2_runtime_adversarial_reviews_symlink_blocks_approve:
+        pre-plant runtime/adversarial-reviews → outside dir with valid ''ship-as-is''
+        artifact + mtime > completed_at + reviewer=cto. Pre-fix: approve PASSES (realpath
+        silently followed). Post-fix: approve BLOCKS with structured ''missing: adversarial
+        review'' message. Outside dir untouched.'
+    - criterion_index: 3
+      criterion_text: 'INVARIANT [positive symmetry]: storage.RUNTIME_DIR itself as
+        symlink to real runtime dir (e.g., /var-on-macOS or operator-chosen storage
+        path) — helper writes successfully AND approve accepts a valid artifact. The
+        ''adversarial-reviews'' child must be a real directory, not a symlink.'
+      evidence: 'CLOSED [positive symmetry]. test_rework4_runtime_dir_symlink_succeeds_with_real_adversarial_reviews:
+        RUNTIME_DIR ancestor symlinked, adversarial-reviews real dir → both helper
+        write and approve succeed. Verifies no above-runtime overblocking.'
+    - criterion_index: 4
+      criterion_text: 'INVARIANT [regression keeper - per-handoff dir symlink]: ''adversarial-reviews/<handoff-id>''
+        as symlink → both helper write and approve fail (rework-2 invariant preserved).'
+      evidence: CLOSED [regression keeper - per-handoff dir symlink]. test_f3_symlinked_per_handoff_dir_blocks_approve
+        (rework-1) still green. Both helper and approve refuse symlinked <hid>.
+    - criterion_index: 5
+      criterion_text: 'INVARIANT [regression keeper - .md artifact symlink]: final
+        .md as symlink → both helper write and approve fail.'
+      evidence: CLOSED [regression keeper - .md symlink]. test_f3_symlinked_md_file_blocks_approve
+        (rework-1) still green. Both helper and approve refuse symlinked .md.
+    - criterion_index: 6
+      criterion_text: 'INVARIANT [regression keeper - mtime]: stale or equal mtime
+        fails approve; fresh mtime > completed_at passes. _utc_iso_to_epoch malformed
+        fails closed.'
+      evidence: CLOSED [regression keeper - mtime]. test_f2_stale_artifact_mtime_blocks_approve,
+        test_f2_artifact_mtime_equal_completed_at_blocks_approve, test_f2_fresh_artifact_mtime_passes_approve,
+        test_f2_malformed_completed_at_fail_closed_no_crash (rework-2) all still green.
+    - criterion_index: 7
+      criterion_text: 'INVARIANT [regression keeper - publication state]: partial
+        write / fsync fail leave no approveable .md (rework-3 invariant preserved).
+        Same-second collision preserves both artifacts (rework-1 F4 invariant).'
+      evidence: CLOSED [regression keeper - publication state]. test_publication_state_partial_write_at_body_no_approveable_artifact,
+        test_publication_state_write_fails_before_any_bytes, test_publication_state_write_fails_late,
+        test_publication_state_fsync_fails_post_write, test_publication_state_collision_preserved,
+        test_publication_state_normal_success_writes_one_final_md (rework-3) all still
+        green.
+    - criterion_index: 8
+      criterion_text: 'INVARIANT [policy doc updated]: docs/policy-delegate-required-approve-gate.md
+        states the actual mtime contract: artifact st_mtime must be strictly > handoff
+        timestamps.completed_at. Any ''mtime is not consulted'' wording removed/replaced.
+        CLI gate error wording (if it mentions mtime) consistent.'
+      evidence: 'CLOSED [policy doc updated]. docs/policy-delegate-required-approve-gate.md
+        lines 33-37: frontmatter review_target_completed_at == timestamps.completed_at
+        AND artifact st_mtime > timestamps.completed_at strict UTC (rework-2 hardening).
+        ''mtime not consulted'' wording removed/replaced.'
+    - criterion_index: 9
+      criterion_text: Boundary-symmetry risk map present in completion report with
+        5 fields per fix per CTO mandate.
+      evidence: 'CLOSED [risk map present]. Boundary-symmetry risk map embedded in
+        tasklet evidence and completion summary above with 5 fields per fix: writer
+        view, reader view (must match), symmetry test, no-overblocking test, new asymmetry
+        risk.'
+    - criterion_index: 10
+      criterion_text: 'Targeted pytest green: ''uv run pytest tests/test_delegate_approve_gate.py
+        -q'' (>=50 + new tests).'
+      evidence: CLOSED [Targeted pytest]. uv run pytest tests/test_delegate_approve_gate.py
+        -q -> 53 passed (was 50, +3).
+    - criterion_index: 11
+      criterion_text: 'Full pytest green: ''uv run pytest tests -q'' (>=399 + new
+        tests, 0 regressions).'
+      evidence: CLOSED [Full pytest]. uv run pytest tests/ -q -> 402 passed (was 399,
+        +3, 0 regressions).
+    - criterion_index: 12
+      criterion_text: Parent execution.child_handoffs has >=1 completed entry with
+        non-empty owned_files (every string non-empty) AND non-empty evidence; NO
+        new external child YAML.
+      evidence: 'CLOSED [child_handoffs >=1 with non-empty owned_files]. execution.child_handoffs
+        has 1 completed entry: orch-delegate-approve-gate-v1-rework-4-tasklet (sonnet,
+        owned_files=[''lib/handoffs.py'', ''tests/test_delegate_approve_gate.py'',
+        ''docs/policy-delegate-required-approve-gate.md''] — 3 non-empty strings,
+        all isinstance(str) and stripped non-empty per rework-2 F3 strict; evidence
+        non-empty long-form text); NO new external child handoff YAML created.'
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: 'rework-4 closes 1 P2 reader/writer asymmetry + 1 P3 doc drift Codex reproduced
+    post-rework-3. ARTIFACT-BOUNDARY CLOSURE PASS — reader and writer now share the
+    same symlink-rejection contract at every component below RUNTIME_DIR. P2 fix:
+    lib/handoffs.py:_find_valid_adversarial_review adds os.path.islink(adv_reviews_root)
+    check before realpath, matching writer''s O_NOFOLLOW openat at this component.
+    Realpath silently followed symlink at adversarial-reviews letting outside-repo
+    artifacts pass approve — this is closed. Above-runtime symlinks still work (rework-2
+    F1 invariant preserved; no overblocking). P3 fix: docs/policy-delegate-required-approve-gate.md
+    mtime contract updated from drifted ''filesystem mtime not consulted'' to actual
+    two-part contract (frontmatter equality + st_mtime > completed_at strict UTC).
+    BOUNDARY-SYMMETRY RISK MAP (5 fields): writer view = O_NOFOLLOW openat per child
+    below RUNTIME_DIR; reader view (post-fix) = os.path.islink at adversarial-reviews
+    + <hid> + .md (matches writer); symmetry test = test_rework4_reader_writer_symmetric_at_adversarial_reviews_child
+    + Codex P2 repro; no-overblocking test = test_rework4_runtime_dir_symlink_succeeds_with_real_adversarial_reviews;
+    new asymmetry risk = reader uses path-string islink not dirfd-bound O_NOFOLLOW
+    (TOCTOU window mitigated by realpath defense-in-depth; full dirfd refactor deferred
+    — would require rework of reader''s iteration over .md files). +3 tests RED-phase
+    verified: Codex P2 repro FAIL pre-fix → PASS post-fix; reader_writer_symmetric
+    FAIL pre-fix → PASS post-fix; runtime_dir_symlink PASS pre+post (no overblocking).
+    Targeted 53 passed (was 50, +3). Full 402 passed (was 399, +3, 0 regressions).
+    NO new external child YAML. NO V2 archive code modifications. NO writer modifications.
+    NO orchctl changes. Helper CLI signature unchanged. All rework-1+rework-2+rework-3
+    invariants preserved. Self-bootstrapping: this rework''s approve will pass through
+    the now-symmetric gate.'
+  files_changed:
+  - 'lib/handoffs.py (MODIFY: +os.path.islink(adv_reviews_root) check at line 1843
+    closing reader/writer asymmetry; existing islink checks on <hid> + .md preserved;
+    realpath containment kept as defense-in-depth; writer untouched)'
+  - 'tests/test_delegate_approve_gate.py (MODIFY: +3 tests — Codex P2 repro, positive
+    symmetry, reader/writer symmetry assertion)'
+  - 'docs/policy-delegate-required-approve-gate.md (MODIFY: lines 33-37 mtime contract
+    corrected from drifted single-line claim to two-part contract — frontmatter equality
+    + st_mtime > completed_at strict UTC)'
+  verification:
+  - uv run pytest tests/test_delegate_approve_gate.py -v -> 53 passed (was 50, +3
+    new). All 3 new tests PASS post-fix. test_rework4_codex_p2_runtime_adversarial_reviews_symlink_blocks_approve
+    and test_rework4_reader_writer_symmetric_at_adversarial_reviews_child FAILED on
+    pre-fix code (asymmetry confirmed); test_rework4_runtime_dir_symlink_succeeds_with_real_adversarial_reviews
+    PASSED on pre-fix code (no overblocking introduced).
+  - uv run pytest tests/ -q -> 402 passed (was 399, +3, 0 regressions in 399 baseline).
+  - 'Code inspection: reader at lib/handoffs.py:1843 has ''if os.path.islink(adv_reviews_root):
+    return None''; preserved islink checks at line 1853 (<hid>) and ~1880 (.md); realpath
+    containment kept at lines 1862-1868 as defense-in-depth; writer at lines 1946-1956
+    UNCHANGED (already correct via _open_or_create_dir_nofollow O_NOFOLLOW).'
+  - 'Doc inspection: docs/policy-delegate-required-approve-gate.md lines 33-37 now
+    states the two-part contract: frontmatter review_target_completed_at == timestamps.completed_at
+    AND artifact st_mtime strictly > timestamps.completed_at (UTC; rework-2 hardening).
+    ''mtime is not consulted'' wording removed.'
+  - 'Helper smoke: helper still works on real handoff (writer untouched). Reader''s
+    new islink check fires only when runtime/adversarial-reviews is itself a symlink
+    — does not affect normal operation.'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-27T14:40:11Z'
+  note: 'Rework-4 closes 1 P2 reader/writer asymmetry + 1 P3 doc drift. Adversarial
+    pre-review (oh-my-claudecode:code-reviewer, independent) verdict: ship-as-is.
+    Q-BSRM (boundary-symmetry risk map): 4/4 components match between writer claims
+    and actual code (RUNTIME_DIR+ancestors plain os.open implicit accept; adversarial-reviews
+    child writer O_NOFOLLOW openat / reader islink NEW; <hid> writer O_NOFOLLOW /
+    reader islink existing; final .md writer O_NOFOLLOW+os.link follow_symlinks=False
+    / reader islink existing). Q-CODEX-REPRO: test_rework4_codex_p2_runtime_adversarial_reviews_symlink_blocks_approve
+    at line 1283 fully reproduces — pre-plants runtime/adversarial-reviews → outside,
+    valid frontmatter ship-as-is artifact in outside dir with all 5 strict conditions,
+    asserts exit 1 with ''adversarial review'' stderr post-fix; docstring at 1295
+    declares ''Pre-fix: approve PASSES (BUG)''. Q-OVERBLOCKING: test_rework4_runtime_dir_symlink_succeeds_with_real_adversarial_reviews
+    at 1326 — RUNTIME_DIR itself IS the symlink, adversarial-reviews real subdir,
+    writer+reader+approve all succeed. Above-runtime symlinks correctly pass. Independent
+    CTO verification: 53 targeted + 402 full pytest, 0 regressions; negative gate
+    fire CONFIRMED (''missing: adversarial review''); self-bootstrap successful —
+    this approve passed through the now-symmetric reader (islink check at adversarial-reviews
+    root accepted because real dir). 1 LOW residual (theoretical TOCTOU between islink
+    and listdir/open; mitigated by realpath containment defense-in-depth; documented
+    in policy doc Known Limitations). Writer logic UNTOUCHED. Helper CLI signature
+    unchanged. Strategy: minimal targeted reader hardening (single os.path.islink
+    check at adversarial-reviews root) preserving rework-2 F1 invariant (above-runtime
+    symlinks allowed). Doc drift fixed via two-part mtime contract restatement (frontmatter
+    review_target_completed_at equality primary AND st_mtime strict > completed_at
+    hardening). NOT staged/committed/pushed per CTO directive — handoff to user/Codex.'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'rework-4 closes 1 p2 reader/writer asymmetry + 1 p3 doc drift. adversarial
+      pre-review (oh-my-claudecode:code-reviewer, independent) verdict: ship-as-is.
+      q-bsrm (boundary-symmetry risk map): 4/4 components match between writer claims
+      and actual code (runtime_dir+ancestors plain os.open implicit accept; adversarial-reviews
+      child writer o_nofollow openat / reader islink new; <hid> writer o_nofollow
+      / reader islink existing; final .md writer o_nofollow+os.link follow_symlinks=false
+      / reader islink existing). q-codex-repro: test_rework4_codex_p2_runtime_adversarial_reviews_symlink_blocks_approve
+      at line 1283 fully reproduces — pre-plants runtime/adversarial-reviews → outside,
+      valid frontmatter ship-as-is artifact in outside dir with all 5 strict conditions,
+      asserts exit 1 with ''adversarial review'' stderr post-fix; docstring at 1295
+      declares ''pre-fix: approve passes (bug)''. q-overblocking: test_rework4_runtime_dir_symlink_succeeds_with_real_adversarial_reviews
+      at 1326 — runtime_dir itself is the symlink, adversarial-reviews real subdir,
+      writer+reader+approve all succeed. above-runtime symlinks correctly pass. independent
+      cto verification: 53 targeted + 402 full pytest, 0 regressions; negative gate
+      fire confirmed (''missing: adversarial review''); self-bootstrap successful
+      — this approve passed through the now-symmetric reader (islink check at adversarial-reviews
+      root accepted because real dir). 1 low residual (theoretical toctou between
+      islink and listdir/open; mitigated by realpath containment defense-in-depth;
+      documented in policy doc known limitations). writer logic untouched. helper
+      cli signature unchanged. strategy: minimal targeted reader hardening (single
+      os.path.islink check at adversarial-reviews root) preserving rework-2 f1 invariant
+      (above-runtime symlinks allowed). doc drift fixed via two-part mtime contract
+      restatement (frontmatter review_target_completed_at equality primary and st_mtime
+      strict > completed_at hardening). not staged/committed/pushed per cto directive
+      — handoff to user/codex.'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

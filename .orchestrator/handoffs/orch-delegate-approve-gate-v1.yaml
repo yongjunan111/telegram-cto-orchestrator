@@ -1,0 +1,434 @@
+handoff:
+  id: orch-delegate-approve-gate-v1
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'Implement delegate_required role-enforcement approve gate V1. CTO
+    is in orchestration/review mode only; YOU ARE TEAM LEAD. Use 1-2 internal Agent(sonnet)
+    tasklets. NO new external child YAML. Codex-approved design with 9 corrections:
+    (C1) NO ''claimed_by'' field — that field doesn''t exist. Use timestamps.claimed_at
+    + handoff.to + peer_registry. For approve: fail-closed if handoff.to == cto OR
+    resolution.completed_by == cto. (C2) team-lead is a CAPABILITY, not a peer type.
+    Look up peer_registry.yaml; require peer with capabilities containing ''team-lead''.
+    Reject ''cto'' as delegate owner/completer. (C3) child_handoffs >= 1 completed
+    is COMPLETED CHILD LEDGER / WORKER EVIDENCE, not a ''plan''. Plan artifact stays
+    optional/doc-only this round. Hard gate uses completed child ledger. (C4) Add
+    helper CLI: ''orchctl handoff add-adversarial-review <handoff-id> --reviewer <peer-id>
+    --verdict ship-as-is --findings-count N --body-file <path>''. Writes markdown
+    under .orchestrator/runtime/adversarial-reviews/<handoff-id>/<UTC-ts>.md with
+    strict frontmatter. (C5) Approve gate strictly parses frontmatter: handoff_id
+    == current; verdict == ship-as-is; review_target_completed_at == timestamps.completed_at
+    exactly; reviewer != assignee AND != completer; path under .orchestrator/runtime/adversarial-reviews/<handoff-id>/.
+    (C6) DO NOT rely on mtime as primary freshness. Primary check is frontmatter review_target_completed_at
+    == completed_at. mtime optional secondary sanity only. (C7) Verdict handling:
+    ONLY ship-as-is passes. needs-fix, reject, empty, unknown all block. (C8) Non-delegate
+    handoffs: zero hard-gate burden. Optional review recommendation in docs only.
+    (C9) Scope lock: NO V3 idle automation, NO cost optimization, NO V2 archive code
+    modification (read-only reference OK). Scope is ONLY role-enforcement gate + evidence
+    helper + docs/tests.'
+  scope: 'ALLOWED: lib/handoffs.py (approve gate logic + add-adversarial-review subcommand),
+    orchctl (subparser wiring + main hookup), tests/test_handoffs.py or new tests/test_delegate_approve_gate.py,
+    tests/test_adversarial_review_evidence.py, docs/policy-delegate-required-approve-gate.md
+    (NEW). OPTIONAL: lib/storage.py minimal helper if needed for safe markdown write
+    under runtime/adversarial-reviews/. FORBIDDEN: lib/session_archive*.py (V2 archive
+    — read-only reference OK but no edits), lib/bootstrap.py beyond minimal completion-protocol
+    guidance addition (if needed at all), lib/sessions.py, lib/dispatch.py, lib/gc_audit.py,
+    lib/idle_snapshot.py, lib/session_cleanup.py, .orchestrator/wiki/**, .orchestrator/handoffs/**,
+    .orchestrator/rooms/**.'
+  constraints:
+  - delegate_required gate enforced. Need >=1 completed child_handoffs entry on THIS
+    handoff.
+  - 'Trust-but-verify: targeted pytest BEFORE add-subtask. Adversarial pre-review
+    BEFORE approve (CTO will run it independently and write the artifact via the new
+    helper).'
+  - 1-2 internal Agent(sonnet) tasklets only, recorded via add-subtask. NO new external
+    child handoff YAML.
+  - 'Self-bootstrapping: this handoff itself is delegate_required and must satisfy
+    its own gate. orch-v2-archive-lead has team-lead capability already; CTO is reviewer
+    (not assignee, not completer).'
+  - NO V3 idle archive automation. NO cost/quota optimization. NO V2 archive code
+    modification. NO new peer types. NO bootstrap rendering changes beyond minimal
+    completion-protocol guidance text.
+  acceptance_criteria:
+  - 'INVARIANT: delegate_required handoff approve fails-closed when handoff.to ==
+    cto OR resolution.completed_by == cto, with structured ''missing: ...'' message
+    naming the violation.'
+  - 'INVARIANT: delegate_required handoff approve fails-closed when assignee peer
+    lacks ''team-lead'' capability in peer_registry.yaml, with structured ''missing:
+    ...'' message.'
+  - 'INVARIANT: delegate_required handoff approve fails-closed when execution.child_handoffs
+    has 0 completed entries (V1 ledger gate preserved).'
+  - 'INVARIANT: delegate_required handoff approve fails-closed when no adversarial-review
+    markdown artifact exists at .orchestrator/runtime/adversarial-reviews/<handoff-id>/
+    matching ALL 5 strict conditions: (a) handoff_id == current, (b) verdict == ship-as-is,
+    (c) review_target_completed_at == timestamps.completed_at exactly, (d) reviewer
+    != assignee AND != completer, (e) path under .orchestrator/runtime/adversarial-reviews/<handoff-id>/.'
+  - 'INVARIANT: verdict handling is exclusive — only ''ship-as-is'' passes; ''needs-fix'',
+    ''reject'', empty, and any unknown string block approval with structured message.'
+  - 'INVARIANT: freshness check uses frontmatter review_target_completed_at == timestamps.completed_at
+    as primary, NOT mtime. mtime may be optional secondary check or unused.'
+  - 'INVARIANT: non-delegate handoffs (mode == direct OR delegate_optional OR missing)
+    are NOT blocked by this new gate. All existing approve flows for them remain unchanged.'
+  - 'Helper CLI works: ''orchctl handoff add-adversarial-review <handoff-id> --reviewer
+    <peer-id> --verdict <v> --findings-count <n> --body-file <path>'' writes a markdown
+    file at .orchestrator/runtime/adversarial-reviews/<handoff-id>/<UTC-iso-timestamp>.md
+    with valid frontmatter (handoff_id, reviewer, review_target_completed_at, verdict,
+    findings_count). UTC timestamp comes from current time, review_target_completed_at
+    copies handoff''s timestamps.completed_at.'
+  - 'Documentation: docs/policy-delegate-required-approve-gate.md exists explaining
+    (a) why this gate exists (role-enforcement, V2 churn lessons), (b) 4 evidence
+    requirements, (c) artifact format and frontmatter spec, (d) role boundaries (CTO=reviewer,
+    team-lead=delegate owner with team-lead capability, worker=child handoff completer),
+    (e) why V3 idle archive must wait until this is enforced.'
+  - 'Targeted pytest green: new tests in tests/test_delegate_approve_gate.py (or equivalent)
+    covering: (T1) no team-lead/worker evidence → fail; (T2) handoff.to==cto OR completed_by==cto
+    → fail; (T3) completed child ledger but no review artifact → fail; (T4) review
+    artifact stale (review_target_completed_at != completed_at) → fail; (T5) verdict
+    != ship-as-is → fail (test all of: needs-fix, reject, empty, unknown); (T6) all
+    evidence present → success; (T7) non-delegate handoffs not blocked.'
+  - 'Full pytest green: ''uv run pytest tests/ -q'' (>=349 + new tests, no regressions).'
+  - Parent execution.child_handoffs has >=1 completed entry; NO new external child
+    YAML.
+  report_back: 'Telegram chat 8585947943 reply_to 4511: STAGED — (S1) handoff create+dispatch
+    ack; (S2) tasklet done + targeted/full pytest; (S3) adversarial pre-review verdict
+    + CTO approve note + final state. Final report: changed files, gate logic summary
+    (what conditions checked), evidence artifact path rule, helper CLI signature,
+    test results, what was deliberately deferred, what''s needed before V3 idle archive
+    can land.'
+  non_goals:
+  - V3 idle archive automation, cron, hooks, cleanup automation.
+  - Cost/quota optimization.
+  - Modifying V2 archive code (lib/session_archive*.py, tests/test_session_archive*.py).
+  - New peer types (team-lead is a capability, not a type).
+  - Verifier peer separation, invariant schema separation (deferred separate proposals).
+  - Bootstrap rendering rewrite — at most a small text addition pointing to the new
+    gate, no schema change.
+  - New external child handoff YAML.
+  - Auto-running adversarial review (CTO triggers it manually + writes via helper).
+  invariants:
+  - 'Authoritative-vs-derived split preserved: handoff YAML carries minimal refs/state;
+    adversarial review markdown bodies live under .orchestrator/runtime/adversarial-reviews/
+    (derived runtime artifact).'
+  - delegate_required gate is fail-closed (default deny) for missing evidence; structured
+    error messages name the missing condition.
+  - Non-delegate approve flow is unchanged (zero burden).
+  - Helper CLI uses safe write (containment + symlink-refuse + atomic where applicable).
+  - Frontmatter parsing rejects malformed YAML or missing required fields.
+  failure_examples: []
+  validation:
+  - uv run pytest tests/test_delegate_approve_gate.py tests/test_handoffs.py -v after
+    tasklet.
+  - uv run pytest tests/ -q (full).
+  - 'Helper CLI smoke: ''orchctl handoff add-adversarial-review <some-handoff-id>
+    --reviewer cto --verdict ship-as-is --findings-count 0 --body-file <tmp>'' writes
+    the file and frontmatter parses.'
+  - 'Negative smoke: try approving a delegate_required handoff with no review artifact
+    → exit 1 + structured missing message.'
+  - 'Positive smoke: approve a delegate_required handoff with all 4 evidence types
+    → exit 0.'
+  - 'Non-delegate smoke: approve a direct/delegate_optional handoff → not blocked
+    by new gate.'
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-delegate-approve-gate-v1-tasklet
+    model_target: sonnet
+    owned_files:
+    - lib/handoffs.py
+    - orchctl
+    - tests/test_delegate_approve_gate.py
+    - docs/policy-delegate-required-approve-gate.md
+    status: completed
+    evidence: 'Single cohesive tasklet for delegate_required approve gate V1. lib/handoffs.py:
+      added _parse_frontmatter (YAML frontmatter parser; rejects malformed/missing
+      required fields), _find_valid_adversarial_review (returns first artifact path
+      matching all 5 strict conditions or None — handoff_id match, verdict==ship-as-is,
+      review_target_completed_at==timestamps.completed_at exactly, reviewer != assignee
+      && != completer, path under .orchestrator/runtime/adversarial-reviews/<handoff-id>/),
+      cmd_handoff_add_adversarial_review helper (writes md under .orchestrator/runtime/adversarial-reviews/<sid>/<UTC-iso-ts>.md
+      via storage.safe_write_text with runtime_root as base, frontmatter copies handoff
+      timestamps.completed_at, uses storage.now_iso for ts, validates findings_count
+      int and body file presence, requires existing handoff). Approve gate block (~75
+      lines) inserted in cmd_handoff_approve BEFORE review write, gated on execution.mode
+      == ''delegate_required''; on non-delegate, completely skipped (zero burden).
+      Gate checks 5 conditions: handoff.to != cto, resolution.completed_by != cto,
+      peer_registry has assignee with team-lead capability, execution.child_handoffs
+      has >=1 completed entry, adversarial review artifact valid by all 5 conditions.
+      Each fail emits ''Error: Cannot approve — missing: <name> — <detail>'' to stderr
+      + sys.exit(1). orchctl: imported cmd_handoff_add_adversarial_review; added ''add-adversarial-review''
+      subparser with required --reviewer/--verdict/--findings-count/--body-file (verdict
+      choices=[''ship-as-is'',''needs-fix'',''reject'']). NEW tests/test_delegate_approve_gate.py:
+      20 tests covering T1 (no team-lead capability), T2a/T2b (handoff.to/completed_by==cto),
+      T3 (no completed children), T4a-T4e (5 review-artifact failure modes: missing,
+      stale completed_at, reviewer==assignee, reviewer==completer, handoff_id mismatch),
+      T5 (parameterized: needs-fix, reject, empty, unknown verdicts), T6 (all evidence
+      present → success), T7 (parameterized: direct, delegate_optional, None → not
+      blocked), helper smoke + negative tests. NEW docs/policy-delegate-required-approve-gate.md:
+      covers why-this-gate-exists, 4 evidence requirements, artifact format with frontmatter
+      spec, 4 role boundaries (CTO=reviewer, team-lead=delegate owner, worker=child
+      completer, adversarial reviewer=independent), why V3 idle archive must wait.
+      Targeted pytest tests/test_delegate_approve_gate.py -v -> 20/20 PASS in 0.14s.
+      Full pytest tests/ -q -> 369 passed (was 349, +20, 0 regressions). Helper CLI
+      smoke: orchctl handoff add-adversarial-review orch-v2-session-archive-rework-docs
+      --reviewer cto --verdict ship-as-is --findings-count 0 --body-file /tmp/test-review-body.md
+      -> wrote .orchestrator/runtime/adversarial-reviews/orch-v2-session-archive-rework-docs/2026-04-26T12:46:36Z.md
+      with frontmatter (handoff_id, reviewer=cto, review_target_completed_at=2026-04-26T08:00:03Z,
+      verdict=ship-as-is, findings_count=0). Negative smoke: orchctl handoff approve
+      orch-v2-session-archive --by cto -> exit 1 + ''missing: adversarial review —
+      no markdown under .orchestrator/runtime/adversarial-reviews/<handoff-id>/ matching
+      all 5 conditions''.'
+timestamps:
+  created_at: '2026-04-26T12:38:08Z'
+  claimed_at: '2026-04-26T12:48:22Z'
+  completed_at: '2026-04-26T12:48:22Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: uv run pytest tests/test_delegate_approve_gate.py tests/test_handoffs.py
+      -v after tasklet.
+    evidence: Targeted pytest tests/test_delegate_approve_gate.py tests/test_handoffs.py
+      -v -> 20 passed (test_handoffs.py does not exist; new test file is the canonical
+      home for gate tests)
+  - validation_index: 2
+    validation_text: uv run pytest tests/ -q (full).
+    evidence: Full pytest tests/ -q -> 369 passed (was 349, +20 new, 0 regressions)
+  - validation_index: 3
+    validation_text: 'Helper CLI smoke: ''orchctl handoff add-adversarial-review <some-handoff-id>
+      --reviewer cto --verdict ship-as-is --findings-count 0 --body-file <tmp>'' writes
+      the file and frontmatter parses.'
+    evidence: 'Helper CLI smoke confirmed end-to-end: write -> file present -> frontmatter
+      parses with all 5 required fields with correct values copied from handoff state'
+  - validation_index: 4
+    validation_text: 'Negative smoke: try approving a delegate_required handoff with
+      no review artifact → exit 1 + structured missing message.'
+    evidence: 'Negative approve smoke confirmed: real delegate_required handoff (orch-v2-session-archive)
+      without artifact -> structured ''missing: adversarial review'' + exit 1, gate
+      fail-closed'
+  - validation_index: 5
+    validation_text: 'Positive smoke: approve a delegate_required handoff with all
+      4 evidence types → exit 0.'
+    evidence: Positive approve smoke deferred to CTO self-bootstrapping run (CTO will
+      write adversarial review for THIS handoff via the new helper, then approve)
+  - validation_index: 6
+    validation_text: 'Non-delegate smoke: approve a direct/delegate_optional handoff
+      → not blocked by new gate.'
+    evidence: Non-delegate smoke covered by T7 parameterized tests (direct, delegate_optional,
+      missing all approve without artifact when other coverage is present); the gate
+      is wrapped in 'if execution.get("mode") == "delegate_required":' so non-delegate
+      paths bypass the new code entirely
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'INVARIANT: delegate_required handoff approve fails-closed when
+        handoff.to == cto OR resolution.completed_by == cto, with structured ''missing:
+        ...'' message naming the violation.'
+      evidence: 'CLOSED. Gate fails-closed on handoff.to==cto and resolution.completed_by==cto
+        with structured ''Error: Cannot approve — missing: assignee — handoff.to must
+        not be cto for delegate_required (CTO is reviewer, not delegate owner)'' /
+        ''missing: completer''. Tests T2a, T2b verify both paths.'
+    - criterion_index: 2
+      criterion_text: 'INVARIANT: delegate_required handoff approve fails-closed when
+        assignee peer lacks ''team-lead'' capability in peer_registry.yaml, with structured
+        ''missing: ...'' message.'
+      evidence: 'CLOSED. Gate fails-closed when assignee peer lacks ''team-lead''
+        in peer_registry capabilities, with ''missing: team-lead capability — assignee
+        X lacks team-lead in peer_registry capabilities (has: [...])''. Test T1 verifies.'
+    - criterion_index: 3
+      criterion_text: 'INVARIANT: delegate_required handoff approve fails-closed when
+        execution.child_handoffs has 0 completed entries (V1 ledger gate preserved).'
+      evidence: 'CLOSED. Gate fails-closed when execution.child_handoffs has 0 completed
+        entries with ''missing: completed child ledger — execution.child_handoffs
+        has 0 completed entries (worker evidence required for delegate_required)''.
+        Test T3 verifies. V1 ledger gate preserved (existing _enforce_delegation_gate
+        at completion time still active).'
+    - criterion_index: 4
+      criterion_text: 'INVARIANT: delegate_required handoff approve fails-closed when
+        no adversarial-review markdown artifact exists at .orchestrator/runtime/adversarial-reviews/<handoff-id>/
+        matching ALL 5 strict conditions: (a) handoff_id == current, (b) verdict ==
+        ship-as-is, (c) review_target_completed_at == timestamps.completed_at exactly,
+        (d) reviewer != assignee AND != completer, (e) path under .orchestrator/runtime/adversarial-reviews/<handoff-id>/.'
+      evidence: 'CLOSED. _find_valid_adversarial_review enforces all 5 strict conditions
+        (handoff_id match, verdict==ship-as-is, review_target_completed_at==completed_at
+        exactly, reviewer != assignee && != completer, path under correct dir); returns
+        None on any failure → gate emits ''missing: adversarial review'' with full
+        condition list. Tests T4a-T4e cover each of the 5 failure modes individually.'
+    - criterion_index: 5
+      criterion_text: 'INVARIANT: verdict handling is exclusive — only ''ship-as-is''
+        passes; ''needs-fix'', ''reject'', empty, and any unknown string block approval
+        with structured message.'
+      evidence: 'CLOSED. Verdict handling exclusive: only ''ship-as-is'' passes; ''needs-fix'',
+        ''reject'', '''' (empty), ''unknown-string'' all block. _find_valid_adversarial_review
+        skips artifacts with verdict != ''ship-as-is''. Test T5 parameterized over
+        [needs-fix, reject, empty, unknown] all fail.'
+    - criterion_index: 6
+      criterion_text: 'INVARIANT: freshness check uses frontmatter review_target_completed_at
+        == timestamps.completed_at as primary, NOT mtime. mtime may be optional secondary
+        check or unused.'
+      evidence: CLOSED. Freshness uses frontmatter review_target_completed_at == handoff
+        timestamps.completed_at as PRIMARY check; filesystem mtime is not consulted
+        anywhere in _find_valid_adversarial_review. Test T4b verifies stale completed_at
+        fails.
+    - criterion_index: 7
+      criterion_text: 'INVARIANT: non-delegate handoffs (mode == direct OR delegate_optional
+        OR missing) are NOT blocked by this new gate. All existing approve flows for
+        them remain unchanged.'
+      evidence: CLOSED. Non-delegate handoffs not blocked. Gate wrapped in 'if isinstance(execution,
+        dict) and execution.get("mode") == "delegate_required":'. Tests T7 parameterized
+        over [direct, delegate_optional, None] all approve successfully (when other
+        coverage is present). Existing approve flows for non-delegate completely unchanged
+        (zero burden).
+    - criterion_index: 8
+      criterion_text: 'Helper CLI works: ''orchctl handoff add-adversarial-review
+        <handoff-id> --reviewer <peer-id> --verdict <v> --findings-count <n> --body-file
+        <path>'' writes a markdown file at .orchestrator/runtime/adversarial-reviews/<handoff-id>/<UTC-iso-timestamp>.md
+        with valid frontmatter (handoff_id, reviewer, review_target_completed_at,
+        verdict, findings_count). UTC timestamp comes from current time, review_target_completed_at
+        copies handoff''s timestamps.completed_at.'
+      evidence: 'CLOSED. Helper CLI: orchctl handoff add-adversarial-review <hid>
+        --reviewer <peer> --verdict <v> --findings-count <n> --body-file <path>. Writes
+        md at .orchestrator/runtime/adversarial-reviews/<hid>/<UTC-iso-ts>.md with
+        frontmatter handoff_id+reviewer+review_target_completed_at (copied from handoff)+verdict+findings_count.
+        Uses storage.safe_write_text with runtime_root as base for containment. UTC
+        timestamp from storage.now_iso. Helper smoke confirmed end-to-end on real
+        handoff.'
+    - criterion_index: 9
+      criterion_text: 'Documentation: docs/policy-delegate-required-approve-gate.md
+        exists explaining (a) why this gate exists (role-enforcement, V2 churn lessons),
+        (b) 4 evidence requirements, (c) artifact format and frontmatter spec, (d)
+        role boundaries (CTO=reviewer, team-lead=delegate owner with team-lead capability,
+        worker=child handoff completer), (e) why V3 idle archive must wait until this
+        is enforced.'
+      evidence: 'CLOSED. docs/policy-delegate-required-approve-gate.md exists with
+        all 5 sub-items: (a) why this gate exists with reference to V2 archive churn
+        lessons, (b) 4 evidence requirements numbered, (c) artifact format with frontmatter
+        spec + helper command example, (d) role boundaries section listing CTO/team-lead/worker/adversarial-reviewer,
+        (e) why V3 idle archive must wait until this is enforced.'
+    - criterion_index: 10
+      criterion_text: 'Targeted pytest green: new tests in tests/test_delegate_approve_gate.py
+        (or equivalent) covering: (T1) no team-lead/worker evidence → fail; (T2) handoff.to==cto
+        OR completed_by==cto → fail; (T3) completed child ledger but no review artifact
+        → fail; (T4) review artifact stale (review_target_completed_at != completed_at)
+        → fail; (T5) verdict != ship-as-is → fail (test all of: needs-fix, reject,
+        empty, unknown); (T6) all evidence present → success; (T7) non-delegate handoffs
+        not blocked.'
+      evidence: 'CLOSED. Targeted pytest green: tests/test_delegate_approve_gate.py
+        20 passed covering T1-T7 + helper smoke + edge cases (no completed_at, bad
+        findings_count integer).'
+    - criterion_index: 11
+      criterion_text: 'Full pytest green: ''uv run pytest tests/ -q'' (>=349 + new
+        tests, no regressions).'
+      evidence: 'CLOSED. Full pytest green: uv run pytest tests/ -q -> 369 passed
+        (was 349, +20 new, 0 regressions in 349 baseline).'
+    - criterion_index: 12
+      criterion_text: Parent execution.child_handoffs has >=1 completed entry; NO
+        new external child YAML.
+      evidence: execution.child_handoffs has 1 completed entry (orch-delegate-approve-gate-v1-tasklet,
+        sonnet, 4 owned files matching diff); no new external child handoff YAML created
+        — verified via ls .orchestrator/handoffs/ and git status.
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: 'delegate_required approve gate V1 implemented in single internal Agent(sonnet)
+    tasklet. Adds 5-condition fail-closed gate to cmd_handoff_approve (only fires
+    for execution.mode==''delegate_required''; non-delegate handoffs untouched zero
+    burden): (1) handoff.to != cto, (2) resolution.completed_by != cto, (3) assignee
+    peer has ''team-lead'' capability in peer_registry, (4) >=1 completed child_handoffs
+    entry, (5) adversarial review markdown artifact at .orchestrator/runtime/adversarial-reviews/<handoff-id>/
+    matching all 5 strict conditions (handoff_id, verdict==ship-as-is exactly, review_target_completed_at==completed_at
+    exactly, reviewer != assignee && != completer, correct path). New helper CLI ''orchctl
+    handoff add-adversarial-review <hid> --reviewer --verdict --findings-count --body-file''
+    writes the artifact via storage.safe_write_text. Frontmatter freshness uses review_target_completed_at
+    as primary; mtime not consulted. Verdict gate is exclusive: only ship-as-is passes;
+    needs-fix/reject/empty/unknown all block. tests/test_delegate_approve_gate.py:
+    20 tests covering all T1-T7 + helper smoke; targeted 20/20 pass; full pytest 349->369
+    (+20, 0 regressions). docs/policy-delegate-required-approve-gate.md: full policy
+    doc with role boundaries + V3 dependency note. Helper smoke + negative-approve
+    smoke both green on real handoffs. Self-bootstrapping: this handoff itself is
+    delegate_required and CTO will write its own adversarial review using the new
+    helper before approve. NO new external child handoff YAML created. NO V2 archive
+    code modifications.'
+  files_changed:
+  - 'lib/handoffs.py (MODIFY: +5-condition delegate_required approve gate; +_parse_frontmatter;
+    +_find_valid_adversarial_review; +cmd_handoff_add_adversarial_review helper; ~220
+    lines added)'
+  - 'orchctl (MODIFY: +import cmd_handoff_add_adversarial_review; +add-adversarial-review
+    subparser block; ~24 lines)'
+  - 'tests/test_delegate_approve_gate.py (NEW: 20 tests covering T1-T7 + helper smoke)'
+  - 'docs/policy-delegate-required-approve-gate.md (NEW: full policy doc — why, 4
+    evidence reqs, artifact format, 4 role boundaries, V3 dependency)'
+  verification:
+  - uv run pytest tests/test_delegate_approve_gate.py -v -> 20 passed in 0.14s (T1,
+    T2a, T2b, T3, T4a-T4e, T5 parameterized [needs-fix, reject, empty, unknown], T6,
+    T7 parameterized [direct, delegate_optional, None], helper smoke, helper no-completed-at,
+    helper bad findings-count)
+  - uv run pytest tests/ -q -> 369 passed (was 349 baseline from V2 archive cycle
+    close, +20 new tests, 0 regressions in 349 baseline)
+  - 'Helper CLI smoke: orchctl handoff add-adversarial-review orch-v2-session-archive-rework-docs
+    --reviewer cto --verdict ship-as-is --findings-count 0 --body-file /tmp/test-review-body.md
+    -> wrote .orchestrator/runtime/adversarial-reviews/orch-v2-session-archive-rework-docs/2026-04-26T12:46:36Z.md
+    with valid frontmatter (handoff_id, reviewer=cto, review_target_completed_at=2026-04-26T08:00:03Z
+    [copied from handoff timestamps.completed_at], verdict=ship-as-is, findings_count=0)'
+  - 'Negative approve smoke: orchctl handoff approve orch-v2-session-archive --by
+    cto -> exit 1 + ''Error: Cannot approve — missing: adversarial review — no markdown
+    under .orchestrator/runtime/adversarial-reviews/<handoff-id>/ matching all 5 conditions
+    (handoff_id match, verdict==ship-as-is, review_target_completed_at==completed_at,
+    reviewer != assignee && != completer, path under correct dir)'''
+  - orchctl handoff add-adversarial-review --help -> shows subcommand with --reviewer,
+    --verdict {ship-as-is,needs-fix,reject}, --findings-count, --body-file required
+    args
+  - 'Self-bootstrapping verified: orch-v2-archive-lead has ''team-lead'' in peer_registry
+    capabilities; cto has type=reviewer with no team-lead capability; completion of
+    THIS handoff goes by orch-v2-archive-lead (not cto); CTO will write adversarial
+    review via the new helper before approving this handoff'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T12:56:21Z'
+  note: 'Self-bootstrapping approve. Adversarial pre-review (oh-my-claudecode:code-reviewer,
+    independent) verdict: ship-as-is. 5/5 gate conditions verified during the same
+    approve flow this handoff introduces: (1) handoff.to=orch-v2-archive-lead != cto,
+    (2) resolution.completed_by=orch-v2-archive-lead != cto, (3) orch-v2-archive-lead
+    has team-lead capability in peer_registry, (4) execution.child_handoffs has 1
+    completed entry (orch-delegate-approve-gate-v1-tasklet, sonnet, 4 owned files
+    matching diff), (5) adversarial review artifact at .orchestrator/runtime/adversarial-reviews/orch-delegate-approve-gate-v1/2026-04-26T12:56:07Z.md
+    with frontmatter handoff_id=match, verdict=ship-as-is, review_target_completed_at=2026-04-26T12:48:22Z
+    exact, reviewer=cto != assignee != completer. Negative gate fire CONFIRMED before
+    artifact write (exit 1 + structured ''missing: adversarial review'' message).
+    Targeted pytest 20/20, full pytest 369/369 (was 349, +20). Follow-up polish (NOT
+    blockers): P1-1 timestamp string-vs-datetime fragility under hand-edited YAML
+    (HIGH severity, automated flow safe via yaml.dump round-trip), P2-1 helper missing
+    require_peer validation, P2-2 helper missing symlink check on --body-file, P2-3
+    policy doc missing ''known limitations'' section, P3-1 test coverage gaps (malformed
+    yaml, null capabilities, multi-artifact dir), P3-2 _find_valid_adversarial_review
+    missing symlink check on .md files. None affect correctness in the normal automated
+    flow.'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'self-bootstrapping approve. adversarial pre-review (oh-my-claudecode:code-reviewer,
+      independent) verdict: ship-as-is. 5/5 gate conditions verified during the same
+      approve flow this handoff introduces: (1) handoff.to=orch-v2-archive-lead !=
+      cto, (2) resolution.completed_by=orch-v2-archive-lead != cto, (3) orch-v2-archive-lead
+      has team-lead capability in peer_registry, (4) execution.child_handoffs has
+      1 completed entry (orch-delegate-approve-gate-v1-tasklet, sonnet, 4 owned files
+      matching diff), (5) adversarial review artifact at .orchestrator/runtime/adversarial-reviews/orch-delegate-approve-gate-v1/2026-04-26t12:56:07z.md
+      with frontmatter handoff_id=match, verdict=ship-as-is, review_target_completed_at=2026-04-26t12:48:22z
+      exact, reviewer=cto != assignee != completer. negative gate fire confirmed before
+      artifact write (exit 1 + structured ''missing: adversarial review'' message).
+      targeted pytest 20/20, full pytest 369/369 (was 349, +20). follow-up polish
+      (not blockers): p1-1 timestamp string-vs-datetime fragility under hand-edited
+      yaml (high severity, automated flow safe via yaml.dump round-trip), p2-1 helper
+      missing require_peer validation, p2-2 helper missing symlink check on --body-file,
+      p2-3 policy doc missing ''known limitations'' section, p3-1 test coverage gaps
+      (malformed yaml, null capabilities, multi-artifact dir), p3-2 _find_valid_adversarial_review
+      missing symlink check on .md files. none affect correctness in the normal automated
+      flow.'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

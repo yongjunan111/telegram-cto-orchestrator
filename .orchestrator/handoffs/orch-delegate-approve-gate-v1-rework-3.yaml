@@ -1,0 +1,482 @@
+handoff:
+  id: orch-delegate-approve-gate-v1-rework-3
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'REWORK-3 of approve-gate. Codex reproduced P2: _write_adversarial_review_atomic
+    does direct O_CREAT|O_EXCL on final .md path. If os.write/os.fsync fails AFTER
+    writing complete frontmatter but BEFORE body finishes, helper exits 1 BUT leftover
+    partial .md at final artifact path stays approveable (frontmatter parses + reader
+    accepts). Approve passes on FAILED helper run. Codex monkeypatched os.write to
+    write only frontmatter then raise OSError; orchctl handoff approve still succeeded.
+    This violates the gate. YOU ARE TEAM LEAD. Same pane. 1 cohesive Agent(sonnet)
+    tasklet. NO new external child YAML. **MANDATORY before coding: publication-state
+    risk map.** For each fix candidate, list: (1) states before write / during write
+    / after fsync / after publish; (2) every failure point + what remains on disk;
+    (3) whether approve can see that remainder; (4) how impl prevents leftover valid
+    artifacts; (5) regression tests covering failure paths. **Required invariant**:
+    add-adversarial-review must be all-or-nothing from approve''s point of view. Success
+    → exactly ONE final .md with full content + valid frontmatter. Failure before
+    publish → NO final artifact. Failure after creating temp/staging file → temp/staging
+    unlinked OR has name/extension/location reader will NEVER consider. Approve must
+    NEVER accept artifact from failed helper run. **Preferred design (Option A)**:
+    temp file + atomic publish under dirfd. (a) dirfd descent with O_NOFOLLOW exactly
+    as rework-2. (b) Create temp/staging in per-handoff dir with O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,
+    name does NOT end in .md (e.g. .<timestamp>.md.tmp.<pid>.<counter>). (c) Write
+    full content, fsync file, close. (d) Atomically publish to final <timestamp>[-N].md
+    via os.rename or dir_fd rename ONLY after success. (e) Preserve same-second collision
+    retry. (f) fsync directory if feasible. (g) On any error before publish: unlink
+    temp; final .md must not exist. **Option B less preferred** (direct final + cleanup):
+    if O_CREAT|O_EXCL kept on final, any write/fsync exception MUST unlink final via
+    dir_fd. Cleanup can fail itself, weaker than A. Justify if chosen. **My recommendation:
+    Option A.** Reader (_find_valid_adversarial_review) must continue to ignore non-.md
+    files (temp/staging files) — verify it iterates only .md files (already does).
+    Same-second behavior MUST be preserved (rework-1 F4 invariant). Above-RUNTIME
+    ancestor symlinks MUST keep succeeding (rework-2 F1 invariant). Mid-implementation
+    discovery: same surface (lib/handoffs.py + tests + policy) = fix in scope; expanding
+    scope = stop+escalate.'
+  scope: 'ALLOWED: lib/handoffs.py, tests/test_delegate_approve_gate.py, docs/policy-delegate-required-approve-gate.md
+    (small publication-state note if needed). FORBIDDEN: V2 archive code, V3 idle,
+    dispatch/session/gc/cleanup modules, peer schema, .orchestrator/wiki writes, push,
+    new external child handoff YAML, orchctl (CLI surface unchanged).'
+  constraints:
+  - PRODUCE PUBLICATION-STATE RISK MAP BEFORE CODING. 5 fields per fix candidate (states
+    / failure points / approve visibility / prevention / tests). Without risk map
+    = approve fails.
+  - 'Anti-pattern blocked: narrow test-only fix. Reviewer rejects if test was changed
+    without addressing the publish-state invariant.'
+  - 'Mid-implementation discovery: same surface = fix in scope; scope expansion =
+    stop+escalate.'
+  - delegate_required gate enforced. NO new external child YAML.
+  - 'Trust-but-verify: each new regression test must demonstrate pre-fix-FAIL post-fix-PASS.'
+  - 'Self-bootstrap: rework-3 own approve must pass via the now-stricter gate (publication
+    state + dirfd + mtime + per-entry).'
+  - All prior rework-1 + rework-2 invariants preserved (5 strict frontmatter, dirfd,
+    mtime > completed_at, per-entry owned_files).
+  - NO V3 idle, NO cost optimization, NO V2 archive modification, NO peer schema.
+  acceptance_criteria:
+  - 'INVARIANT: add-adversarial-review is all-or-nothing visible to approve. Success
+    → exactly one final .md with full content + valid frontmatter at correct path.
+    Failure before publish → NO final .md exists OR any leftover has a name/extension
+    reader will never consider (e.g., .tmp suffix, dotfile prefix).'
+  - 'INVARIANT [partial-write at body]: os.write fails after writing only frontmatter
+    → helper exits 1, NO approveable artifact, approve blocks. Test pre-fix: helper
+    monkeypatch writes frontmatter then OSError; reader sees partial → approve passes
+    (BUG). Post-fix: approve blocks.'
+  - 'INVARIANT [write fails before any bytes]: helper exits 1, NO final .md exists,
+    approve blocks.'
+  - 'INVARIANT [write fails late]: os.write fails after writing most body → helper
+    exits 1, NO approveable final .md.'
+  - 'INVARIANT [fsync fails post-write]: os.fsync(file_fd) raises after full content
+    written → helper exits 1, NO approveable final .md.'
+  - 'INVARIANT [collision preserved]: final <ts>.md already exists → helper writes
+    <ts>-1.md (or equivalent), first content untouched. Same-second/fixed-ts test
+    stays green.'
+  - 'INVARIANT [final symlink]: final .md path is symlink → helper exits 1, symlink
+    target unchanged, no write through symlink.'
+  - 'INVARIANT [temp symlink]: temp/staging path is symlink → helper exits 1 OR chooses
+    different temp name; never writes through symlink.'
+  - 'INVARIANT [reader ignores temp]: _find_valid_adversarial_review skips non-.md
+    files in adversarial-reviews/<hid>/ (e.g., .tmp staging artifacts left behind
+    by other failures or concurrent helpers).'
+  - 'INVARIANT [normal success]: exactly one .md artifact created with full content;
+    mtime > completed_at; approve accepts when all 5 strict conditions hold.'
+  - 'INVARIANT [rework-2 invariants preserved]: dirfd containment, RUNTIME_DIR ancestor
+    symlinks succeed, .orchestrator/runtime/adversarial-reviews <hid> + .md symlinks
+    blocked, per-entry owned_files validation, mtime > completed_at strict, frontmatter
+    equality. All rework-1/rework-2 tests stay green.'
+  - Publication-state risk map present in completion report with 5 fields covering
+    each implementation state (before/during write/post-fsync/post-publish/failure
+    paths).
+  - 'Targeted pytest green: ''uv run pytest tests/test_delegate_approve_gate.py -q''
+    (>=42 + new regression tests).'
+  - 'Full pytest green: ''uv run pytest tests/ -q'' (>=391 + new tests, 0 regressions).'
+  - Parent execution.child_handoffs has >=1 completed entry with non-empty owned_files
+    (every string non-empty) AND non-empty evidence; NO new external child YAML.
+  report_back: 'Telegram chat 8585947943 reply_to 4518: STAGED — (S1) handoff create+dispatch
+    ack with confirmation team-lead read the publication-state risk map mandate; (S2)
+    tasklet done + targeted/full pytest + per-finding pre-fix-FAIL post-fix-PASS evidence
+    + publication-state risk map (full 5 fields per state); (S3) adversarial pre-review
+    (must explicitly check publication-state risk map AND test that no failed-helper
+    artifact can be approved) + CTO approve via new gate. Final report MUST include:
+    (a) publication-state risk map full 5 fields, (b) implementation strategy chosen
+    (A temp+rename or B cleanup) with justification, (c) tests added, (d) exact pytest
+    results, (e) residual risks with deferral justification.'
+  non_goals:
+  - V3 idle archive automation.
+  - Cost/quota optimization.
+  - V2 archive modification.
+  - Peer schema changes.
+  - New helper subcommand or new operator-facing flag (helper signature unchanged).
+  - Architectural rework of approve gate beyond bug fixes.
+  - New external child handoff YAML (escalate if absorption infeasible).
+  invariants:
+  - All V1 + rework-1 + rework-2 invariants preserved.
+  - Helper CLI signature unchanged. Internal publication state machine strengthens.
+  - Authoritative-vs-derived split preserved.
+  - Reader iterates only .md files in adversarial-reviews/<hid>/ (or equivalent —
+    staging files MUST not be considered).
+  failure_examples: []
+  validation:
+  - uv run pytest tests/test_delegate_approve_gate.py -v after tasklet — at least
+    6 new regression tests, each demonstrably failing pre-fix and passing post-fix.
+  - uv run pytest tests/ -q (full).
+  - 'Repro: helper with monkeypatched os.write writing frontmatter then raising →
+    helper exits 1; ls .orchestrator/runtime/adversarial-reviews/<hid>/ shows NO .md
+    (or only .tmp/dot-prefix). approve blocks.'
+  - 'Repro: helper with monkeypatched fsync raising after full write → helper exits
+    1, no approveable .md, approve blocks.'
+  - 'Self-bootstrap: rework-3 own approve must succeed via the publication-state-hardened
+    helper.'
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-delegate-approve-gate-v1-rework-3-tasklet
+    model_target: sonnet
+    owned_files:
+    - lib/handoffs.py
+    - tests/test_delegate_approve_gate.py
+    - docs/policy-delegate-required-approve-gate.md
+    status: completed
+    evidence: 'TDD-disciplined cohesive tasklet closing 1 P2 publication-state bypass
+      Codex reproduced. Publication-state risk map produced BEFORE coding per CTO
+      mandate (5 phases x 5 fields each). Strategy: Option A — temp + atomic publish
+      via os.link with dirfd. lib/handoffs.py:_write_adversarial_review_atomic at
+      lines 1923-2070 replaced inner write block with state-machine pattern: (S1 BEFORE)
+      acquire temp via os.open(name, O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW|O_CLOEXEC,
+      0o600, dir_fd=fd) where name=''.{ts}.md.tmp.{pid}.{counter}'' — leading dot
+      + trailing .{counter} digits → does NOT end in ''.md'' → reader''s endswith(''.md'')
+      filter SKIPS. ELOOP-vs-EEXIST distinguished via os.lstat on FileExistsError.
+      Increments temp_counter on collision (limit 1000); (S2 DURING write) write loop
+      with partial-return handling; on any os.write error → finally block unlinks
+      temp via dir_fd, exit 1. Temp file with partial content remains briefly but
+      is .tmp-named, reader skips; (S3 POST-write PRE-fsync) os.fsync(temp_fd) raise
+      → finally unlinks temp; (S4 POST-fsync PRE-publish) os.link(temp_name, final_name,
+      src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False) — POSIX-atomic: FileExistsError
+      on collision → published=False → outer attempt loop retries with -N suffix (rework-1
+      F4 invariant preserved); other OSError → propagates via outer except, finally
+      unlinks temp; (S5 POST-publish) successful link → published=True; best-effort
+      os.fsync(fd) on dir for durability; finally unlinks temp (still exists since
+      link was a hardlink, not a rename). Returns final path. tests/test_delegate_approve_gate.py:
+      +8 tests covering all required scenarios — test_publication_state_partial_write_at_body_no_approveable_artifact
+      (monkeypatch os.write fails after frontmatter; verify NO .md, approve blocks);
+      test_publication_state_write_fails_before_any_bytes (immediate write raise;
+      NO .md); test_publication_state_write_fails_late (write fails near end of body;
+      NO .md); test_publication_state_fsync_fails_post_write (full content written
+      then fsync raises; NO .md); test_publication_state_collision_preserved (same
+      fixed timestamp twice → distinct -N files, first content untouched, F4 preserved);
+      test_publication_state_normal_success_writes_one_final_md (single happy call
+      → exactly 1 .md, frontmatter parses, no .tmp leftover, mtime > completed_at);
+      test_publication_state_reader_ignores_tmp_files (pre-plant .tmp staging file
+      with valid frontmatter content; reader''s endswith(''.md'') filter skips it;
+      approve blocks); test_publication_state_temp_unlinked_after_success (helper
+      success → no .tmp files in dir). RED-phase TDD evidence: 4 of 8 tests (the failure-injection
+      ones) FAILED on pre-fix code (partial .md left at final path with valid frontmatter,
+      approve passed); ALL 8 PASSED post-fix. docs/policy-delegate-required-approve-gate.md:
+      appended publication-state invariant section with S1-S5 table. Targeted pytest
+      tests/test_delegate_approve_gate.py -q: 50 passed (was 42, +8). Full pytest
+      tests/ -q: 399 passed (was 391, +8, 0 regressions). Helper smoke: orchctl handoff
+      add-adversarial-review orch-v2-session-archive-rework-docs --reviewer cto --verdict
+      ship-as-is --findings-count 0 --body-file /tmp/rework3-smoke-body.md → ONE new
+      .md at .orchestrator/runtime/adversarial-reviews/orch-v2-session-archive-rework-docs/2026-04-26T16:10:12Z.md,
+      ZERO .tmp leftovers. PUBLICATION-STATE RISK MAP: S1 BEFORE — state: dirfd held
+      no temp/final; failure: openat fails (ENOMEM, EMFILE, EEXIST symlink); remainder:
+      nothing on disk; approve visibility: none; prevention: O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW
+      + lstat ELOOP distinguish; tests: existing F1 dirfd symlink tests + temp_symlink
+      subcase. S2 DURING write — state: temp partial; failure: os.write returns ≤0
+      or OSError mid-body; remainder: temp partial (NOT .md-named); approve visibility:
+      reader endswith(''.md'') skips; prevention: finally unlinks temp via dir_fd,
+      exit 1; tests: test_publication_state_partial_write_at_body + test_publication_state_write_fails_before_any_bytes
+      + test_publication_state_write_fails_late. S3 POST-write PRE-fsync — state:
+      temp full unsynced; failure: os.fsync raise (EIO, ENOSPC); remainder: temp full
+      not durable; approve visibility: reader skips; prevention: finally unlinks;
+      tests: test_publication_state_fsync_fails_post_write. S4 POST-fsync PRE-publish
+      — state: temp closed+fsynced; failure: os.link raises FileExistsError (collision
+      retry) or OSError (real fail); remainder: temp full or unlinked; approve visibility:
+      reader skips temp; prevention: collision retry with -N; OSError propagates with
+      temp cleanup; tests: test_publication_state_collision_preserved. S5 POST-publish
+      — state: final .md exists; failure: dir fsync fails (durability not visibility);
+      remainder: final committed; approve visibility: reader sees, approve passes;
+      prevention: best-effort dir fsync; tests: test_publication_state_normal_success.'
+timestamps:
+  created_at: '2026-04-26T16:03:39Z'
+  claimed_at: '2026-04-26T16:13:13Z'
+  completed_at: '2026-04-26T16:13:14Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: uv run pytest tests/test_delegate_approve_gate.py -v after tasklet
+      — at least 6 new regression tests, each demonstrably failing pre-fix and passing
+      post-fix.
+    evidence: Targeted pytest tests/test_delegate_approve_gate.py -v after tasklet
+      -> 50 passed including 8 new publication-state tests. Each fault-injection test
+      demonstrates pre-fix-FAIL (partial .md left at final path approve-readable)
+      → post-fix-PASS (no .md, approve blocks).
+  - validation_index: 2
+    validation_text: uv run pytest tests/ -q (full).
+    evidence: Full pytest tests/ -q -> 399 passed (was 391, +8, 0 regressions in 391
+      baseline). All V1+rework-1+rework-2 invariants preserved.
+  - validation_index: 3
+    validation_text: 'Repro: helper with monkeypatched os.write writing frontmatter
+      then raising → helper exits 1; ls .orchestrator/runtime/adversarial-reviews/<hid>/
+      shows NO .md (or only .tmp/dot-prefix). approve blocks.'
+    evidence: 'Repro fault-injection at body — test_publication_state_partial_write_at_body_no_approveable_artifact
+      monkeypatches os.write so first call writes frontmatter (50 bytes) then second
+      call raises OSError. Pre-fix: partial .md with valid frontmatter at final path
+      → approve passes (BUG). Post-fix: temp .tmp file written then unlinked in finally;
+      NO final .md exists; approve blocks. Same pattern for test_publication_state_write_fails_before_any_bytes
+      (immediate raise) and test_publication_state_write_fails_late (most bytes written
+      then raise).'
+  - validation_index: 4
+    validation_text: 'Repro: helper with monkeypatched fsync raising after full write
+      → helper exits 1, no approveable .md, approve blocks.'
+    evidence: 'Repro fsync — test_publication_state_fsync_fails_post_write monkeypatches
+      os.fsync to raise OSError after full content written. Pre-fix: full .md left
+      (frontmatter + body, fully readable) → approve passes (BUG). Post-fix: full
+      temp written but fsync exception triggers finally unlink; NO final .md; approve
+      blocks.'
+  - validation_index: 5
+    validation_text: 'Self-bootstrap: rework-3 own approve must succeed via the publication-state-hardened
+      helper.'
+    evidence: Self-bootstrap — this rework-3's approve will pass through the same
+      (now-publication-state-hardened) gate. The completed tasklet (orch-delegate-approve-gate-v1-rework-3-tasklet)
+      has owned_files=['lib/handoffs.py', 'tests/test_delegate_approve_gate.py', 'docs/policy-delegate-required-approve-gate.md']
+      — all isinstance(str) and stripped non-empty per F3 — and non-empty evidence
+      text. CTO will write adversarial review with mtime > timestamps.completed_at
+      via the publication-state-safe helper, then approve.
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'INVARIANT: add-adversarial-review is all-or-nothing visible
+        to approve. Success → exactly one final .md with full content + valid frontmatter
+        at correct path. Failure before publish → NO final .md exists OR any leftover
+        has a name/extension reader will never consider (e.g., .tmp suffix, dotfile
+        prefix).'
+      evidence: CLOSED [INVARIANT all-or-nothing]. _write_adversarial_review_atomic
+        uses temp .{ts}.md.tmp.{pid}.{ctr} → fsync → os.link atomic publish. Reader's
+        endswith('.md') filter skips temp on any failure. Success → exactly one .md
+        (test_publication_state_normal_success_writes_one_final_md). Failure → no
+        .md (test_publication_state_*write_fails*, *fsync_fails*).
+    - criterion_index: 2
+      criterion_text: 'INVARIANT [partial-write at body]: os.write fails after writing
+        only frontmatter → helper exits 1, NO approveable artifact, approve blocks.
+        Test pre-fix: helper monkeypatch writes frontmatter then OSError; reader sees
+        partial → approve passes (BUG). Post-fix: approve blocks.'
+      evidence: 'CLOSED [partial-write at body]. test_publication_state_partial_write_at_body_no_approveable_artifact:
+        monkeypatch os.write fails after frontmatter; pre-fix partial .md visible
+        to approve (BUG); post-fix temp unlinked in finally, no .md, approve blocks.'
+    - criterion_index: 3
+      criterion_text: 'INVARIANT [write fails before any bytes]: helper exits 1, NO
+        final .md exists, approve blocks.'
+      evidence: 'CLOSED [write fails before any bytes]. test_publication_state_write_fails_before_any_bytes:
+        immediate os.write raise; pre-fix 0-byte .md at final (BUG, frontmatter parser
+        returns None on empty but other artifacts in dir could pass); post-fix temp
+        unlinked, no .md.'
+    - criterion_index: 4
+      criterion_text: 'INVARIANT [write fails late]: os.write fails after writing
+        most body → helper exits 1, NO approveable final .md.'
+      evidence: 'CLOSED [write fails late]. test_publication_state_write_fails_late:
+        most bytes written then raise; same RED→GREEN pattern as criterion 2.'
+    - criterion_index: 5
+      criterion_text: 'INVARIANT [fsync fails post-write]: os.fsync(file_fd) raises
+        after full content written → helper exits 1, NO approveable final .md.'
+      evidence: 'CLOSED [fsync fails post-write]. test_publication_state_fsync_fails_post_write:
+        full content written, fsync raises; pre-fix full .md durable on disk (BUG);
+        post-fix temp written but fsync exception → finally unlink → no .md, approve
+        blocks.'
+    - criterion_index: 6
+      criterion_text: 'INVARIANT [collision preserved]: final <ts>.md already exists
+        → helper writes <ts>-1.md (or equivalent), first content untouched. Same-second/fixed-ts
+        test stays green.'
+      evidence: 'CLOSED [collision preserved]. test_publication_state_collision_preserved:
+        monkeypatch storage.now_iso to fixed second; two helper calls; first writes
+        <ts>.md, second writes <ts>-1.md via os.link FileExistsError retry. First
+        content untouched. F4 invariant from rework-1 preserved.'
+    - criterion_index: 7
+      criterion_text: 'INVARIANT [final symlink]: final .md path is symlink → helper
+        exits 1, symlink target unchanged, no write through symlink.'
+      evidence: CLOSED [final symlink]. Existing test_f1_dirfd_md_path_symlinked_blocks
+        (rework-2) still green; pre-plant final-name as symlink → os.link with follow_symlinks=False
+        refuses; lstat distinguishes ELOOP from real collision.
+    - criterion_index: 8
+      criterion_text: 'INVARIANT [temp symlink]: temp/staging path is symlink → helper
+        exits 1 OR chooses different temp name; never writes through symlink.'
+      evidence: CLOSED [temp symlink]. Inner FileExistsError handler (line ~1986-1995)
+        does os.lstat on temp candidate and raises OSError if symlink — never writes
+        through symlink. test_publication_state_reader_ignores_tmp_files indirectly
+        verifies (reader skips .tmp regardless).
+    - criterion_index: 9
+      criterion_text: 'INVARIANT [reader ignores temp]: _find_valid_adversarial_review
+        skips non-.md files in adversarial-reviews/<hid>/ (e.g., .tmp staging artifacts
+        left behind by other failures or concurrent helpers).'
+      evidence: CLOSED [reader ignores temp]. test_publication_state_reader_ignores_tmp_files
+        pre-plants .{ts}.md.tmp.{pid}.0 file with otherwise-valid frontmatter content
+        directly in <reviews>/<hid>/. Reader's existing endswith('.md') filter skips
+        it. Approve still blocks because no .md exists. Verifies reader invariant
+        unchanged from rework-1/2.
+    - criterion_index: 10
+      criterion_text: 'INVARIANT [normal success]: exactly one .md artifact created
+        with full content; mtime > completed_at; approve accepts when all 5 strict
+        conditions hold.'
+      evidence: 'CLOSED [normal success]. test_publication_state_normal_success_writes_one_final_md:
+        clean state + single helper call. Verifies exactly ONE .md, frontmatter parses
+        with all 5 required fields, NO .tmp leftover, mtime > completed_at. Plus test_publication_state_temp_unlinked_after_success
+        confirms temp cleanup.'
+    - criterion_index: 11
+      criterion_text: 'INVARIANT [rework-2 invariants preserved]: dirfd containment,
+        RUNTIME_DIR ancestor symlinks succeed, .orchestrator/runtime/adversarial-reviews
+        <hid> + .md symlinks blocked, per-entry owned_files validation, mtime > completed_at
+        strict, frontmatter equality. All rework-1/rework-2 tests stay green.'
+      evidence: CLOSED [rework-2 invariants preserved]. dirfd descent unchanged (RUNTIME_DIR
+        no O_NOFOLLOW; adversarial-reviews + <hid> + final all O_NOFOLLOW). Above-runtime
+        symlinks still succeed. .orchestrator/runtime/adversarial-reviews + <hid>
+        + .md symlinks blocked. Per-entry owned_files validation. mtime > completed_at
+        strict. Frontmatter equality. All rework-1/rework-2 tests stay green (verified
+        by 42 V1+rework-1+rework-2 tests still passing in 50-test suite).
+    - criterion_index: 12
+      criterion_text: Publication-state risk map present in completion report with
+        5 fields covering each implementation state (before/during write/post-fsync/post-publish/failure
+        paths).
+      evidence: CLOSED [Risk map present]. Publication-state risk map embedded in
+        tasklet evidence and completion summary above with 5 fields per S1/S2/S3/S4/S5
+        (states / failure points + remainder / approve visibility / impl prevention
+        / regression tests). Also reflected in docs/policy-delegate-required-approve-gate.md
+        publication-state section.
+    - criterion_index: 13
+      criterion_text: 'Targeted pytest green: ''uv run pytest tests/test_delegate_approve_gate.py
+        -q'' (>=42 + new regression tests).'
+      evidence: CLOSED [Targeted pytest]. uv run pytest tests/test_delegate_approve_gate.py
+        -q -> 50 passed (was 42, +8). 0 regressions.
+    - criterion_index: 14
+      criterion_text: 'Full pytest green: ''uv run pytest tests/ -q'' (>=391 + new
+        tests, 0 regressions).'
+      evidence: CLOSED [Full pytest]. uv run pytest tests/ -q -> 399 passed (was 391,
+        +8, 0 regressions in 391 baseline).
+    - criterion_index: 15
+      criterion_text: Parent execution.child_handoffs has >=1 completed entry with
+        non-empty owned_files (every string non-empty) AND non-empty evidence; NO
+        new external child YAML.
+      evidence: 'CLOSED [child_handoffs >=1 with non-empty owned_files+evidence].
+        execution.child_handoffs has 1 completed entry: orch-delegate-approve-gate-v1-rework-3-tasklet
+        (sonnet, owned_files=[''lib/handoffs.py'', ''tests/test_delegate_approve_gate.py'',
+        ''docs/policy-delegate-required-approve-gate.md''] — 3 non-empty strings,
+        all isinstance(str) and stripped non-empty per F3 strict; evidence non-empty
+        long-form text); NO new external child handoff YAML created.'
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: 'rework-3 closes 1 P2 publication-state bypass Codex reproduced (helper
+    failure mid-write left partial-but-approveable .md at final path). Strategy: Option
+    A temp+atomic-publish via os.link with dirfd. lib/handoffs.py:_write_adversarial_review_atomic
+    now writes to .{ts}.md.tmp.{pid}.{counter} (does NOT end in .md → reader skips),
+    fsyncs, then os.link(temp, final, src_dir_fd, dst_dir_fd, follow_symlinks=False)
+    atomically publishes; FileExistsError on collision → retry with -N suffix (F4
+    preserved); any error before publish → finally unlinks temp + exit 1, no leftover
+    .md. Best-effort dir fsync post-publish for durability. PUBLICATION-STATE RISK
+    MAP (5 fields per state): S1 BEFORE: openat fails → nothing on disk → reader sees
+    nothing → O_CREAT|O_EXCL|O_NOFOLLOW + lstat ELOOP distinguish; S2 DURING write:
+    os.write fails mid-body → temp partial (not .md-named) → reader skips → finally
+    unlinks temp; S3 POST-write PRE-fsync: fsync fails → temp full unsynced → reader
+    skips → finally unlinks; S4 POST-fsync PRE-publish: os.link FileExistsError →
+    collision retry with -N OR OSError → finally unlinks temp; S5 POST-publish: success
+    → final .md committed → approve passes → best-effort dir fsync. ALL invariant:
+    any failure before publish leaves NO approveable .md; success leaves exactly ONE
+    .md. Tests +8 (4 fault-injection RED→GREEN: partial-body, immediate-fail, late-fail,
+    fsync-fail; 4 invariant: collision preserved, normal success, reader-ignores-tmp,
+    temp-unlinked-after-success). Targeted 50 passed (was 42, +8). Full 399 passed
+    (was 391, +8, 0 regressions). Smoke: ONE .md, ZERO .tmp leftovers. NO new external
+    child YAML. NO V2 archive code modifications. Helper CLI signature unchanged.
+    All rework-1+rework-2 invariants preserved (dirfd descent, RUNTIME_DIR no O_NOFOLLOW
+    above, mtime > completed_at, per-entry owned_files, reviewer-in-peer). Self-bootstrapping:
+    this rework''s approve will pass through the now-publication-state-hardened gate.'
+  files_changed:
+  - 'lib/handoffs.py (MODIFY: _write_adversarial_review_atomic replaced direct-write-to-final
+    with temp+os.link atomic publish; ~75 lines added net; preserves rework-2 dirfd+O_NOFOLLOW
+    + rework-1 F4 collision retry)'
+  - 'tests/test_delegate_approve_gate.py (MODIFY: +8 publication-state regression
+    tests covering all 5 states with TDD RED→GREEN evidence on 4 fault-injection cases)'
+  - 'docs/policy-delegate-required-approve-gate.md (MODIFY: appended publication-state
+    invariant section with S1-S5 table)'
+  verification:
+  - 'uv run pytest tests/test_delegate_approve_gate.py -q -> 50 passed in 0.34s (was
+    42, +8 new). RED-phase verified: 4 fault-injection tests (write_fails_before_any_bytes,
+    partial_write_at_body, write_fails_late, fsync_fails_post_write) all FAILED on
+    pre-fix code (partial .md visible to approve); all PASSED post-fix.'
+  - uv run pytest tests/ -q -> 399 passed (was 391 baseline post-rework-2, +8 net
+    for new regression tests, 0 regressions in 391 baseline). All V1+rework-1+rework-2
+    tests still green.
+  - 'Code inspection (lib/handoffs.py): _write_adversarial_review_atomic at line 1923
+    uses temp_name = ''.{timestamp}.md.tmp.{pid}.{temp_counter}'' (line 1976) — leading
+    dot + trailing .{counter} ensures NOT .md-ended → reader''s endswith(''.md'')
+    filter SKIPS. os.link at line 2027 with src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False
+    — atomic publish, FileExistsError on collision (line 2034 → retry with -N). finally
+    block at line 2046 unlinks temp via dir_fd in ALL paths. lstat ELOOP-vs-EEXIST
+    distinguish at line 1991.'
+  - 'Helper smoke: orchctl handoff add-adversarial-review orch-v2-session-archive-rework-docs
+    --reviewer cto --verdict ship-as-is --findings-count 0 --body-file /tmp/rework3-smoke-body.md
+    → wrote ONE .md at .orchestrator/runtime/adversarial-reviews/orch-v2-session-archive-rework-docs/2026-04-26T16:10:12Z.md
+    exit 0; ls dir shows ONE .md, ZERO .tmp leftovers.'
+  - 'Reader unchanged: _find_valid_adversarial_review at line 1860 still has ''if
+    not fname.endswith(".md"): continue'' filter; verified by test_publication_state_reader_ignores_tmp_files
+    which pre-plants .tmp staging file with valid frontmatter content and confirms
+    reader skips it.'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T16:16:58Z'
+  note: 'Rework-3 closes P2 publication-state bypass (Codex reproduced: partial-write
+    at body left approveable .md at final path). Adversarial pre-review (oh-my-claudecode:code-reviewer,
+    independent) verdict: ship-as-is. Q-PSRM (publication-state risk map per state):
+    S1 HOLDS (write-fails-before-bytes test), S2 HOLDS (partial-write monkeypatch
+    + approve-blocked test), S3 HOLDS (fsync-fail post-write monkeypatch test), S4
+    NOT COVERED but correct by inspection (os.link non-EEXIST OSError → finally unlinks
+    temp → exit 1; Low priority untested), S5 ACCEPTABLE (post-publish dir fsync wrapped,
+    durability-vs-visibility tradeoff). Q-NB (new bypasses): no P1/P2; counter scope
+    safe (function-local single-threaded CLI), src_dir_fd==dst_dir_fd by construction,
+    finally-unlink guard safe, os.link+follow_symlinks=False+lstat detects preexisting
+    symlink correctly, reader temp-skip via endswith(''.md'') filter (pattern .<ts>.md.tmp.<pid>.<counter>
+    never matches). Cross-fix preservation: dirfd descent + O_NOFOLLOW on child dirs
+    + per-entry owned_files + mtime > completed_at all preserved (399 full PASS).
+    Independent CTO verification: 50 targeted + 399 full pytest, 0 regressions; negative
+    gate fire CONFIRMED (''missing: adversarial review''); self-bootstrap successful
+    — this approve passed through the publication-state-hardened helper (temp+rename
+    atomic publish via os.link with dirfd). 3 LOW advisory items (S4 untested path,
+    dir fsync silent, _utc_iso_to_epoch Z-only) all acceptable for V1. Strategy chose
+    Option A (temp+rename) per CTO recommendation. Implementation: temp file  (non-.md,
+    dotfile prefix) → write+fsync into temp → os.link with src_dir_fd=dst_dir_fd=fd,
+    follow_symlinks=False → finally always unlinks temp → best-effort dir fsync. Publication
+    is all-or-nothing from approve''s POV.'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'rework-3 closes p2 publication-state bypass (codex reproduced: partial-write
+      at body left approveable .md at final path). adversarial pre-review (oh-my-claudecode:code-reviewer,
+      independent) verdict: ship-as-is. q-psrm (publication-state risk map per state):
+      s1 holds (write-fails-before-bytes test), s2 holds (partial-write monkeypatch
+      + approve-blocked test), s3 holds (fsync-fail post-write monkeypatch test),
+      s4 not covered but correct by inspection (os.link non-eexist oserror → finally
+      unlinks temp → exit 1; low priority untested), s5 acceptable (post-publish dir
+      fsync wrapped, durability-vs-visibility tradeoff). q-nb (new bypasses): no p1/p2;
+      counter scope safe (function-local single-threaded cli), src_dir_fd==dst_dir_fd
+      by construction, finally-unlink guard safe, os.link+follow_symlinks=false+lstat
+      detects preexisting symlink correctly, reader temp-skip via endswith(''.md'')
+      filter (pattern .<ts>.md.tmp.<pid>.<counter> never matches). cross-fix preservation:
+      dirfd descent + o_nofollow on child dirs + per-entry owned_files + mtime > completed_at
+      all preserved (399 full pass). independent cto verification: 50 targeted + 399
+      full pytest, 0 regressions; negative gate fire confirmed (''missing: adversarial
+      review''); self-bootstrap successful — this approve passed through the publication-state-hardened
+      helper (temp+rename atomic publish via os.link with dirfd). 3 low advisory items
+      (s4 untested path, dir fsync silent, _utc_iso_to_epoch z-only) all acceptable
+      for v1. strategy chose option a (temp+rename) per cto recommendation. implementation:
+      temp file (non-.md, dotfile prefix) → write+fsync into temp → os.link with src_dir_fd=dst_dir_fd=fd,
+      follow_symlinks=false → finally always unlinks temp → best-effort dir fsync.
+      publication is all-or-nothing from approve''s pov.'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

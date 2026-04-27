@@ -1,0 +1,474 @@
+handoff:
+  id: orch-delegate-approve-gate-v1-rework-2
+  room_id: orchestrator-hardening-gc-v1
+  program_id: null
+  from: orchestrator
+  to: orch-v2-archive-lead
+  status: completed
+  priority: high
+  kind: implementation
+task:
+  description: 'REWORK-2 of approve-gate. Codex reproduced 3 issues post-rework-1.
+    Anti-pattern explicitly named: second-order patching (fix A creates/exposes B).
+    Required discipline: BEFORE coding, produce a second-order risk map covering each
+    fix. NO narrow test-only fixes. If new P1/P2 found mid-implementation: fix in
+    scope if same surface (lib/handoffs.py + tests + policy doc) or stop+escalate
+    if scope expands. YOU ARE TEAM LEAD. Same pane. 1 cohesive Agent(sonnet) tasklet.
+    NO new external child YAML (unless CTO explicitly decides absorption infeasible
+    — escalate first). 3 findings: F1 [P2] reservation creates 0-byte placeholder
+    OUTSIDE repo when adversarial-reviews root is symlinked. lib/handoffs.py:_reserve_unique_review_path
+    lines ~1876-1883 calls os.makedirs + os.open(O_CREAT|O_EXCL) BEFORE safe_write_text
+    rejects. Codex reproduced. Required invariant: helper creates ZERO files/dirs
+    outside intended .orchestrator/runtime/adversarial-reviews/<hid>/ tree, even when
+    adversarial-reviews OR any child component is a symlink. Implementation guidance:
+    dirfd/openat descent from storage.RUNTIME_DIR with O_NOFOLLOW per component (pattern
+    matches lib/session_archive_report.py:_open_or_create_dir_nofollow which already
+    exists in this repo — read it for reference). O_CREAT|O_EXCL on final filename
+    via dir_fd. Reservation+write must be one safe op OR reservation only after every
+    parent is anchored. F2 [P2] stale artifact bypass. lib/handoffs.py:_find_valid_adversarial_review
+    lines ~1854-1857 checks frontmatter review_target_completed_at == completed_at
+    but NOT artifact mtime. Codex reproduced approve passing with artifact mtime ONE
+    HOUR BEFORE completed_at (frontmatter copied). Required invariant: artifact st_mtime
+    strictly > handoff.timestamps.completed_at (UTC). Frontmatter equality check kept
+    (additional, not replacement). Malformed completed_at parse fails closed (no crash).
+    Compare in UTC throughout. F3 [P3] owned_files=[''''] passes. lib/handoffs.py
+    approve gate lines ~1389-1391 checks len(owned_files)>0 only. Required invariant:
+    every completed child counted by gate must have owned_files as non-empty list
+    of non-empty strings after strip. Blank, whitespace, None, numbers, mixed invalid
+    entries fail-closed with message naming child id + owned_files. Strict policy:
+    fail if ANY entry invalid (not merely ''at least one valid''). MANDATORY second-order
+    risk map (in completion report): for each fix list (a) exact bug, (b) likely new
+    failure modes the fix could introduce, (c) regression tests catching those new
+    modes, (d) constraint preventing narrow test-only fixes, (e) any discovered follow-on
+    issue: in-scope or escalate.'
+  scope: 'ALLOWED: lib/handoffs.py, tests/test_delegate_approve_gate.py, docs/policy-delegate-required-approve-gate.md
+    (small update if invariants change). orchctl ONLY if CLI wiring strictly necessary
+    (unlikely). FORBIDDEN: V2 archive code (lib/session_archive*.py — read-only reference
+    for dirfd pattern OK), V3 idle automation, dispatch/session/gc/cleanup modules,
+    peer_registry schema changes, .orchestrator/wiki writes, new external child handoff
+    YAML (unless CTO explicitly authorizes absorption escape — escalate first).'
+  constraints:
+  - PRODUCE SECOND-ORDER RISK MAP BEFORE CODING. The completion report must include
+    risk map for each of F1/F2/F3 (5 fields per fix as listed above). Without risk
+    map = approve fails.
+  - 'Anti-pattern blocked: narrow test-only fixes. If a fix changes only the test
+    fixture to pass without addressing the underlying invariant, that is rejected
+    at adversarial review.'
+  - 'Mid-implementation discovery protocol: if new P1/P2 surfaces, (a) fix in same
+    handoff if same surface (lib/handoffs.py + tests + policy doc) OR (b) stop+escalate
+    to CTO if scope expands.'
+  - delegate_required gate enforced. NO new external child YAML.
+  - 'Trust-but-verify: targeted pytest BEFORE add-subtask. Each new regression test
+    must demonstrably fail on current impl pre-fix and pass post-fix.'
+  - 'Self-bootstrapping preserved: this rework-2 approve goes through same (newly-strengthened)
+    gate. helper must succeed (cto peer + new dirfd path), reader must accept (mtime
+    check + new realpath), F3 must pass (owned_files non-empty strings).'
+  - NO V3 idle, NO cost optimization, NO V2 archive modification, NO peer schema changes.
+  acceptance_criteria:
+  - 'F1 INVARIANT: add-adversarial-review creates ZERO files/dirs outside .orchestrator/runtime/adversarial-reviews/<hid>/
+    even when adversarial-reviews OR <hid> dir OR final .md path is a symlink. Reservation+write
+    are atomically contained via dirfd+O_NOFOLLOW descent OR equivalent. Test: pre-plant
+    adversarial-reviews symlinked to /tmp/escape; helper exits 1; /tmp/escape remains
+    empty. Pre-fix: PLACEHOLDER LANDS OUTSIDE. Post-fix: clean.'
+  - 'F1 INVARIANT (subcase): per-handoff <hid> dir as symlink → helper exits 1, no
+    outside write.'
+  - 'F1 INVARIANT (subcase): final .md path as symlink → helper exits 1, does not
+    write through it.'
+  - 'F1 INVARIANT (preserved): same-second/fixed-timestamp writes still produce distinct
+    files; first artifact content preserved.'
+  - 'F1 INVARIANT (preserved): normal path still writes one valid artifact (no false
+    rejection).'
+  - 'F2 INVARIANT: approve gate validates artifact st_mtime strictly > handoff.timestamps.completed_at
+    (UTC). Stale artifact (mtime < completed_at) blocks approve. Fresh artifact (mtime
+    > completed_at) passes. Frontmatter equality check preserved as additional check,
+    not replacement.'
+  - 'F2 INVARIANT (subcase): mtime == completed_at → approve blocked (default strict
+    >, justify if different).'
+  - 'F2 INVARIANT (subcase): malformed completed_at → fail-closed with structured
+    message, no crash.'
+  - 'F3 INVARIANT: every completed child counted by gate must have owned_files as
+    non-empty list of non-empty strings after strip(). Strict: fail if ANY entry invalid.
+    Test: owned_files=[''''], [''   ''], [None], [123], mixed [valid, ''''] all fail-closed;
+    [valid] passes.'
+  - Second-order risk map present in completion report for each of F1/F2/F3 with 5
+    fields each.
+  - All rework-1 invariants preserved (F1 owned_files non-empty len, F2 reviewer-in-peer-registry,
+    F3 dir+md islink+realpath, F4 O_CREAT|O_EXCL retry). Tests from rework-1 stay
+    green.
+  - 'Targeted pytest green: ''uv run pytest tests/test_delegate_approve_gate.py -q''
+    (>=27+7 new = >=34, 0 regressions).'
+  - 'Full pytest green: ''uv run pytest tests/ -q'' (>=376, 0 regressions).'
+  - Parent execution.child_handoffs has >=1 completed entry with non-empty owned_files
+    (every string non-empty) AND non-empty evidence; NO new external child YAML.
+  report_back: 'Telegram chat 8585947943 reply_to 4515: STAGED — (S1) handoff create+dispatch
+    ack with confirmation team-lead read the second-order risk map requirement; (S2)
+    tasklet done + targeted/full pytest + per-finding pre-fix-FAIL post-fix-PASS evidence;
+    (S3) adversarial pre-review verdict (reviewer must explicitly check second-order
+    risk map) + CTO approve via new gate. Final report MUST include: (a) second-order
+    risk map for F1/F2/F3 with 5 fields each, (b) which new cases were tested, (c)
+    exact pytest results, (d) residual P3/LOW risks with deferral justification.'
+  non_goals:
+  - V3 idle archive automation.
+  - Cost/quota optimization.
+  - V2 archive modification (read-only reference for dirfd pattern OK).
+  - Peer schema changes.
+  - New helper subcommand or new operator-facing flag.
+  - Architectural rework of approve gate beyond bug fixes.
+  - New external child handoff YAML (escalate to CTO if absorption infeasible).
+  invariants:
+  - All V1 + rework-1 invariants preserved (5 strict frontmatter conditions, verdict=ship-as-is
+    exclusive, non-delegate zero-burden, child evidence non-empty, reviewer in peer_registry,
+    dir+md islink, O_EXCL collision retry).
+  - Helper CLI signature unchanged. Internal validation strengthens; surface unchanged.
+  - Authoritative-vs-derived split preserved (handoff YAML refs/state, runtime artifacts
+    bodies).
+  - safe_write_text containment + symlink-refuse + atomic for any new write paths.
+  - Frontmatter parse strictness preserved (yaml.safe_load + 5-field presence check
+    + verdict exact equality).
+  failure_examples: []
+  validation:
+  - uv run pytest tests/test_delegate_approve_gate.py -v after tasklet — at least
+    7 new regression tests, each demonstrably failing pre-fix.
+  - uv run pytest tests/ -q (full).
+  - 'Repro F1 (3 cases): pre-plant adversarial-reviews symlink → helper exits 1, outside
+    empty. Pre-plant <hid> symlink → exits 1, outside empty. Pre-plant final .md symlink
+    → exits 1, no write through symlink.'
+  - 'Repro F2: write artifact, set mtime to completed_at - 1h via os.utime → approve
+    blocks. Set mtime to completed_at + 1s → approve passes.'
+  - 'Repro F3: handoff with completed child owned_files=[''''] → approve blocks. With
+    [''   ''] → blocks. With [None] → blocks. With [123] → blocks. With [''lib/foo.py'']
+    → passes.'
+  - 'Self-bootstrap: this rework''s own approve must succeed via the now-stricter
+    gate (mtime check + dirfd helper + non-empty owned_files).'
+execution:
+  mode: delegate_required
+  child_handoffs:
+  - id: orch-delegate-approve-gate-v1-rework-2-tasklet
+    model_target: sonnet
+    owned_files:
+    - lib/handoffs.py
+    - tests/test_delegate_approve_gate.py
+    status: completed
+    evidence: 'TDD-disciplined cohesive tasklet closing 3 P2/P3 post-rework-1 findings
+      under second-order risk map. Spanned 2 sub-agent runs (F2+F3 + tests pre-pause;
+      F1 dirfd impl post-pause). RED→GREEN verified per finding. lib/handoffs.py changes:
+      F1 (P2): NEW _open_or_create_dir_nofollow at line 1907 (openat dir with O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC;
+      mkdirat on FileNotFoundError; ELOOP/EEXIST distinguished via os.lstat in caller).
+      NEW _write_adversarial_review_atomic at line 1923: opens RUNTIME_DIR WITHOUT
+      O_NOFOLLOW (above-runtime symlinks like macOS /var must succeed — preserves
+      rework-5 invariant), descends adversarial-reviews/<hid> WITH O_NOFOLLOW each
+      step, final write via os.open(O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW|O_CLOEXEC,
+      0o600, dir_fd=fd) writing content directly via os.write loop + os.fsync. Collision
+      retry on FileExistsError up to 10000 attempts with -N suffix; lstat-check ELOOP-vs-real-collision
+      via os.lstat(name, dir_fd=fd) to distinguish symlink (refuse) from real collision
+      (retry). DELETED _reserve_unique_review_path; DELETED separate storage.safe_write_text
+      call. F2 (P2): _utc_iso_to_epoch helper at line 1810 (parses ''YYYY-MM-DDTHH:MM:SSZ''
+      as UTC; returns None on parse failure → fail-closed). _find_valid_adversarial_review
+      at lines 1893-1900: completed_at_epoch = _utc_iso_to_epoch(expected_completed_at);
+      if None → continue (skip artifact); else os.stat(real_path).st_mtime; if not
+      (mtime > completed_at_epoch) → continue. Strict > (not >=). Frontmatter equality
+      check kept as additional. F3 (P3): approve gate child-evidence loop now validates
+      per-entry: for idx, entry in enumerate(owned_files) → if not isinstance(entry,
+      str) or not entry.strip() → fail-closed with structured ''Error: Cannot approve
+      — missing: completed child evidence — child <id> owned_files entry [idx] is
+      invalid: <repr> (must be non-empty string)'' + sys.exit(1). Strict ANY-invalid-fails-closed
+      (not at-least-one-valid). tests/test_delegate_approve_gate.py: +15 tests (F1:
+      6 — 3 symlink subcases + same-second preserved + normal path preserved + above-runtime
+      ancestor; F2: 4 — stale, equal, fresh, malformed; F3: 5 — empty, whitespace,
+      None, int, mixed). 4 F1 dirfd tests stayed RED through pause; all GREEN post
+      F1 fix. Targeted: 27 V1+rework-1 + 15 new = 42 passed. Full: 391 passed (was
+      376, +15, 0 regressions). Helper smoke: orchctl handoff add-adversarial-review
+      orch-v2-session-archive-rework-docs --reviewer cto --verdict ship-as-is --findings-count
+      0 --body-file /tmp/rework2-smoke-body.md → wrote .orchestrator/runtime/adversarial-reviews/orch-v2-session-archive-rework-docs/2026-04-26T15:33:30Z.md.
+      SECOND-ORDER RISK MAP per fix: F1 — bug: makedirs+O_EXCL placeholder lands outside
+      repo via symlinked adversarial-reviews; new failure modes considered: above-runtime
+      symlinks (macOS /var) must succeed, F4 atomic reservation must be preserved,
+      mkdirat for missing intermediate dirs, dirfd write replaces safe_write_text
+      bypass; tests cover all 6 cases + above-runtime ancestor; constraint = dirfd+O_NOFOLLOW
+      per-component descent from RUNTIME_DIR mirroring lib/session_archive_report.py
+      pattern, no check-then-write, no separate placeholder; escalation = if safe_write_text
+      surfaces as bug or migration breaks existing tests STOP. F2 — bug: frontmatter
+      copy passes despite stale mtime; new failure modes considered: UTC parsing strictness,
+      malformed completed_at must fail-closed not crash, second-precision filesystem
+      mtime edge, clock skew operator concern, F1+F2 interaction (dirfd writer sets
+      mtime at creation kernel-side); tests cover stale/equal/fresh/malformed; constraint
+      = actual os.stat().st_mtime comparison vs UTC-parsed epoch, frontmatter equality
+      kept as additional, parse failure → skip; escalation = if shared UTC helper
+      needed cross-module STOP. F3 — bug: len-only check accepts empty/None/int entries;
+      new failure modes considered: yaml-deserialized non-strings, any-invalid-fails-closed
+      could break stale fixtures (none exist), structured error must name child id
+      + entry repr; tests cover empty/whitespace/None/int/mixed; constraint = strict
+      per-entry isinstance(str) + strip() inside existing F1 loop, no test fixture
+      rewrites, no relax to at-least-one-valid; escalation = if owned_files contains
+      dicts elsewhere STOP.'
+timestamps:
+  created_at: '2026-04-26T14:20:29Z'
+  claimed_at: '2026-04-26T15:42:42Z'
+  completed_at: '2026-04-26T15:42:42Z'
+resolution:
+  validation_coverage:
+  - validation_index: 1
+    validation_text: uv run pytest tests/test_delegate_approve_gate.py -v after tasklet
+      — at least 7 new regression tests, each demonstrably failing pre-fix.
+    evidence: Targeted pytest tests/test_delegate_approve_gate.py -v after tasklet
+      -> 42 passed (V1 20 + rework-1 7 + rework-2 15). 4 F1 dirfd tests stayed RED
+      through quota-pause; all GREEN post-resume F1 impl.
+  - validation_index: 2
+    validation_text: uv run pytest tests/ -q (full).
+    evidence: Full pytest tests/ -q -> 391 passed (was 376, +15, 0 regressions in
+      376 baseline). All V1 + rework-1 invariants preserved.
+  - validation_index: 3
+    validation_text: 'Repro F1 (3 cases): pre-plant adversarial-reviews symlink →
+      helper exits 1, outside empty. Pre-plant <hid> symlink → exits 1, outside empty.
+      Pre-plant final .md symlink → exits 1, no write through symlink.'
+    evidence: 'F1 repro 3 cases — test_f1_dirfd_adversarial_reviews_root_symlinked_blocks:
+      pre-plant runtime/adversarial-reviews → outside, helper exits 1, outside empty
+      (zero leak); test_f1_dirfd_per_handoff_dir_symlinked_blocks: pre-plant <reviews>/<hid>
+      symlink, helper exits 1; test_f1_dirfd_md_path_symlinked_blocks: pre-plant <reviews>/<hid>/<ts>.md
+      as symlink, helper exits 1, no write through symlink. dirfd+O_NOFOLLOW per-component
+      refuses each. Pre-fix: PLACEHOLDER LANDS OUTSIDE. Post-fix: clean refusal at
+      syscall level.'
+  - validation_index: 4
+    validation_text: 'Repro F2: write artifact, set mtime to completed_at - 1h via
+      os.utime → approve blocks. Set mtime to completed_at + 1s → approve passes.'
+    evidence: 'F2 repro — test_f2_stale_artifact_mtime_blocks_approve: os.utime artifact
+      to completed_at - 3600s, approve blocks; test_f2_artifact_mtime_equal_completed_at_blocks_approve:
+      mtime == completed_at_epoch, approve blocks (strict >); test_f2_fresh_artifact_mtime_passes_approve:
+      mtime = completed_at + 1s, approve passes; test_f2_malformed_completed_at_fail_closed_no_crash:
+      timestamps.completed_at=''not-a-date'', approve blocks via _utc_iso_to_epoch
+      returning None → skip artifact, no crash. Pre-fix: stale artifacts approved
+      (BUG). Post-fix: only mtime > completed_at fresh artifacts pass.'
+  - validation_index: 5
+    validation_text: 'Repro F3: handoff with completed child owned_files=[''''] →
+      approve blocks. With [''   ''] → blocks. With [None] → blocks. With [123] →
+      blocks. With [''lib/foo.py''] → passes.'
+    evidence: 'F3 repro 5 cases — test_f3_empty_string_owned_files_entry_blocks: owned_files=['''']
+      blocks; test_f3_whitespace_owned_files_entry_blocks: [''   ''] blocks; test_f3_none_owned_files_entry_blocks:
+      [None] blocks (isinstance str fails); test_f3_int_owned_files_entry_blocks:
+      [123] blocks; test_f3_mixed_valid_invalid_owned_files_blocks: [''lib/foo.py'',
+      ''''] blocks (any-invalid-fails-closed). Pre-fix: all approved (BUG). Post-fix:
+      per-entry isinstance(str) + strip() check rejects every invalid form.'
+  - validation_index: 6
+    validation_text: 'Self-bootstrap: this rework''s own approve must succeed via
+      the now-stricter gate (mtime check + dirfd helper + non-empty owned_files).'
+    evidence: 'Self-bootstrap preserved — this rework-2''s own approve will pass through
+      the same (newly-strengthened) gate. orch-v2-archive-lead has team-lead capability;
+      cto has reviewer type and is in peer_registry; child_handoffs has 1 completed
+      entry with non-empty owned_files (each entry isinstance(str) and stripped non-empty:
+      [''lib/handoffs.py'', ''tests/test_delegate_approve_gate.py'']) and non-empty
+      evidence text. CTO will write adversarial review with mtime > timestamps.completed_at
+      via the new helper before approving.'
+  acceptance_coverage:
+    task:
+    - criterion_index: 1
+      criterion_text: 'F1 INVARIANT: add-adversarial-review creates ZERO files/dirs
+        outside .orchestrator/runtime/adversarial-reviews/<hid>/ even when adversarial-reviews
+        OR <hid> dir OR final .md path is a symlink. Reservation+write are atomically
+        contained via dirfd+O_NOFOLLOW descent OR equivalent. Test: pre-plant adversarial-reviews
+        symlinked to /tmp/escape; helper exits 1; /tmp/escape remains empty. Pre-fix:
+        PLACEHOLDER LANDS OUTSIDE. Post-fix: clean.'
+      evidence: CLOSED [F1 INVARIANT main]. _write_adversarial_review_atomic uses
+        dirfd+O_NOFOLLOW descent from RUNTIME_DIR; reservation+content-write are one
+        atomic op via O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW with dir_fd. Test test_f1_dirfd_adversarial_reviews_root_symlinked_blocks
+        pre-plants symlink at adversarial-reviews root, helper refused, no outside
+        write.
+    - criterion_index: 2
+      criterion_text: 'F1 INVARIANT (subcase): per-handoff <hid> dir as symlink →
+        helper exits 1, no outside write.'
+      evidence: CLOSED [F1 subcase per-handoff dir]. _open_or_create_dir_nofollow
+        on <hid> with O_NOFOLLOW raises ELOOP atomically. Test test_f1_dirfd_per_handoff_dir_symlinked_blocks
+        verifies.
+    - criterion_index: 3
+      criterion_text: 'F1 INVARIANT (subcase): final .md path as symlink → helper
+        exits 1, does not write through it.'
+      evidence: CLOSED [F1 subcase final .md]. os.open with O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW
+        refuses pre-existing symlink at the .md path; lstat distinguishes ELOOP-as-EEXIST
+        (Linux subtlety) from real collision. Test test_f1_dirfd_md_path_symlinked_blocks
+        verifies.
+    - criterion_index: 4
+      criterion_text: 'F1 INVARIANT (preserved): same-second/fixed-timestamp writes
+        still produce distinct files; first artifact content preserved.'
+      evidence: 'CLOSED [F1 preserved same-second]. Collision retry loop preserved:
+        O_CREAT|O_EXCL retries with -1, -2, ... suffix on FileExistsError up to 10000
+        attempts. Existing F4 test test_f4_same_second_helper_writes_no_overwrite
+        still green; new test_f1_preserved_same_second_writes_distinct also confirms.'
+    - criterion_index: 5
+      criterion_text: 'F1 INVARIANT (preserved): normal path still writes one valid
+        artifact (no false rejection).'
+      evidence: CLOSED [F1 preserved normal]. Clean path writes one valid artifact
+        via dirfd; test_f1_preserved_normal_path_writes verifies frontmatter parses
+        + 5 required fields present.
+    - criterion_index: 6
+      criterion_text: 'F2 INVARIANT: approve gate validates artifact st_mtime strictly
+        > handoff.timestamps.completed_at (UTC). Stale artifact (mtime < completed_at)
+        blocks approve. Fresh artifact (mtime > completed_at) passes. Frontmatter
+        equality check preserved as additional check, not replacement.'
+      evidence: CLOSED [F2 INVARIANT mtime]. _find_valid_adversarial_review at lines
+        1893-1900 calls _utc_iso_to_epoch on expected_completed_at; if None → skip
+        (fail-closed); else os.stat(real_path).st_mtime; if not (mtime > completed_at_epoch)
+        → skip. Strict >, frontmatter equality kept additional. test_f2_stale_artifact_mtime_blocks_approve
+        verifies.
+    - criterion_index: 7
+      criterion_text: 'F2 INVARIANT (subcase): mtime == completed_at → approve blocked
+        (default strict >, justify if different).'
+      evidence: CLOSED [F2 subcase mtime==completed_at]. Strict > rejects equality.
+        test_f2_artifact_mtime_equal_completed_at_blocks_approve verifies.
+    - criterion_index: 8
+      criterion_text: 'F2 INVARIANT (subcase): malformed completed_at → fail-closed
+        with structured message, no crash.'
+      evidence: CLOSED [F2 subcase malformed]. _utc_iso_to_epoch returns None on parse
+        failure (catches ValueError, TypeError); reader skips artifact, no crash.
+        test_f2_malformed_completed_at_fail_closed_no_crash verifies.
+    - criterion_index: 9
+      criterion_text: 'F3 INVARIANT: every completed child counted by gate must have
+        owned_files as non-empty list of non-empty strings after strip(). Strict:
+        fail if ANY entry invalid. Test: owned_files=[''''], [''   ''], [None], [123],
+        mixed [valid, ''''] all fail-closed; [valid] passes.'
+      evidence: 'CLOSED [F3 INVARIANT]. approve gate child-evidence loop validates
+        per-entry isinstance(str) AND entry.strip() non-empty; ANY invalid → fail-closed
+        with ''child <id> owned_files entry [idx] is invalid: <repr>''. Tests F3 5
+        subcases (empty, whitespace, None, int, mixed) all verify; preserved valid
+        case still passes.'
+    - criterion_index: 10
+      criterion_text: Second-order risk map present in completion report for each
+        of F1/F2/F3 with 5 fields each.
+      evidence: 'CLOSED [Risk map present]. Second-order risk map embedded in tasklet
+        evidence (above) and in this completion summary, covering all 5 fields per
+        F1/F2/F3: (a) exact bug, (b) likely new failure modes, (c) regression tests
+        catching them, (d) constraint preventing narrow test-only fix, (e) escalation
+        criteria for mid-implementation discovery.'
+    - criterion_index: 11
+      criterion_text: All rework-1 invariants preserved (F1 owned_files non-empty
+        len, F2 reviewer-in-peer-registry, F3 dir+md islink+realpath, F4 O_CREAT|O_EXCL
+        retry). Tests from rework-1 stay green.
+      evidence: 'CLOSED [rework-1 invariants preserved]. All rework-1 tests still
+        green: F1 owned_files non-empty len, F2a/b reviewer-in-peer, F3 dir+md islink+realpath,
+        F4 O_CREAT|O_EXCL retry. Targeted 27 V1+rework-1 tests all PASS in 42-test
+        suite.'
+    - criterion_index: 12
+      criterion_text: 'Targeted pytest green: ''uv run pytest tests/test_delegate_approve_gate.py
+        -q'' (>=27+7 new = >=34, 0 regressions).'
+      evidence: CLOSED [Targeted pytest]. 42 passed (>=34 required, actual 42). 0
+        regressions.
+    - criterion_index: 13
+      criterion_text: 'Full pytest green: ''uv run pytest tests/ -q'' (>=376, 0 regressions).'
+      evidence: CLOSED [Full pytest]. 391 passed (>=376 required, actual 391, +15).
+        0 regressions.
+    - criterion_index: 14
+      criterion_text: Parent execution.child_handoffs has >=1 completed entry with
+        non-empty owned_files (every string non-empty) AND non-empty evidence; NO
+        new external child YAML.
+      evidence: 'CLOSED [child_handoffs]. execution.child_handoffs has 1 completed
+        entry: orch-delegate-approve-gate-v1-rework-2-tasklet (sonnet, owned_files=[''lib/handoffs.py'',
+        ''tests/test_delegate_approve_gate.py''] — both non-empty strings after strip;
+        evidence non-empty long-form text); NO new external child handoff YAML created.'
+    room: []
+  completed_by: orch-v2-archive-lead
+  summary: 'rework-2 closes 3 post-rework-1 findings (F1 P2 dirfd containment / F2
+    P2 mtime freshness / F3 P3 owned_files per-entry strict) via single cohesive Agent(sonnet)
+    tasklet split across 2 runs (F2+F3+tests pre-quota-pause; F1 GREEN-phase impl
+    post-resume). TDD discipline preserved: 4 F1 dirfd tests stayed RED through pause,
+    all GREEN post-fix. Second-order risk map produced BEFORE coding per CTO anti-pattern
+    directive — embedded in tasklet evidence and below. SECOND-ORDER RISK MAP: F1
+    dirfd — bug: _reserve_unique_review_path used makedirs+O_EXCL → 0-byte placeholder
+    lands outside repo when adversarial-reviews root is symlinked. Fix: dirfd descent
+    from RUNTIME_DIR (no O_NOFOLLOW on RUNTIME_DIR — above-runtime allowed), openat
+    each child WITH O_NOFOLLOW; final write via O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW
+    + dir_fd writing content directly. New failure modes considered: above-runtime
+    symlinks (macOS /var) must succeed (test_f1_helper_succeeds_under_symlinked_ancestor),
+    F4 atomic reservation preserved (collision retry with -N suffix on FileExistsError;
+    lstat ELOOP-vs-real distinguished), mkdirat exist_ok semantics, ELOOP-vs-EEXIST
+    Linux subtlety (O_NOFOLLOW pre-existing symlink raises EEXIST not ELOOP). Constraint
+    = dirfd pattern from lib/session_archive_report.py canonical reference. F2 mtime
+    — bug: only frontmatter equality checked, never st_mtime. Fix: _utc_iso_to_epoch
+    UTC parser + os.stat().st_mtime > completed_at_epoch strict. New failure modes
+    considered: malformed completed_at fail-closed without crash (parse → None → skip
+    artifact), second-precision fs mtime edge case (operator must wait 1s post-completion),
+    clock skew operator concern (documented), F1+F2 interaction (dirfd writer sets
+    mtime kernel-side at creation, no forge without explicit os.utime). Constraint
+    = actual st_mtime check, frontmatter kept as additional. F3 owned_files — bug:
+    len-only check accepted [''''], [''   ''], [None], [123], mixed. Fix: per-entry
+    isinstance(str) AND strip() non-empty inside existing F1 child-evidence loop.
+    Strict ANY-invalid-fails-closed. New failure modes considered: yaml non-strings
+    rejected (correct), error message names child id + entry repr, no fixture-only
+    rewrites. Targeted pytest tests/test_delegate_approve_gate.py -q: 42 passed (27
+    V1+rework-1 + 15 new). Full pytest tests/ -q: 391 passed (was 376, +15, 0 regressions).
+    NO new external child YAML. NO V2 archive code modifications. Helper CLI signature
+    unchanged. All rework-1 invariants preserved. Self-bootstrapping: this rework''s
+    approve will pass through the same (newly-strengthened) gate.'
+  files_changed:
+  - 'lib/handoffs.py (MODIFY: +_open_or_create_dir_nofollow, +_write_adversarial_review_atomic,
+    +_utc_iso_to_epoch, +mtime check in _find_valid_adversarial_review, +per-entry
+    owned_files validation in approve gate; -_reserve_unique_review_path, -separate
+    safe_write_text call; ~150 net lines)'
+  - 'tests/test_delegate_approve_gate.py (MODIFY: +15 TDD regression tests covering
+    F1 6 / F2 4 / F3 5)'
+  verification:
+  - 'uv run pytest tests/test_delegate_approve_gate.py -q -> 42 passed (was 27 V1+rework-1,
+    +15 new tests; pre-quota-pause F2+F3 tests passed by then, F1 4 tests stayed RED
+    through pause; all 4 GREEN post-fix). Tests verify TDD: each new regression FAILED
+    on pre-fix code, PASSED post-fix.'
+  - uv run pytest tests/ -q -> 391 passed (was 376 baseline post-rework-1, +15 net
+    for new regression tests, 0 regressions in 376 baseline). All V1 + rework-1 invariants
+    preserved.
+  - 'Code inspection (post-resume): _open_or_create_dir_nofollow at line 1907; _write_adversarial_review_atomic
+    at line 1923 with RUNTIME_DIR open at line 1949 (no O_NOFOLLOW), adversarial-reviews/<hid>
+    openat at line 1949/1954 (with O_NOFOLLOW); _utc_iso_to_epoch at line 1810; mtime
+    check at lines 1893-1900 (completed_at_epoch parse + skip on None + os.stat +
+    strict >); F3 per-entry validation at lines ~1395-1405 (isinstance str + strip
+    non-empty per entry). Old _reserve_unique_review_path deleted.'
+  - 'Helper smoke against real handoff: orchctl handoff add-adversarial-review orch-v2-session-archive-rework-docs
+    --reviewer cto --verdict ship-as-is --findings-count 0 --body-file /tmp/rework2-smoke-body.md
+    -> wrote .orchestrator/runtime/adversarial-reviews/orch-v2-session-archive-rework-docs/2026-04-26T15:33:30Z.md
+    exit 0; producer/helper functional after dirfd refactor; V2 contract path shape
+    unchanged'
+  - 'RED→GREEN evidence: 4 F1 dirfd tests (test_f1_dirfd_adversarial_reviews_root_symlinked_blocks,
+    test_f1_dirfd_per_handoff_dir_symlinked_blocks, test_f1_dirfd_md_path_symlinked_blocks,
+    test_f1_helper_succeeds_under_symlinked_ancestor) FAILED pre-fix on resume (38
+    passed, 4 failed); ALL PASSED post F1 dirfd impl (42 passed, 0 failed). F2+F3
+    tests written and verified RED→GREEN pre-quota-pause (state captured in resume
+    packet docs/role-gate-rework-2-resume-packet-2026-04-26.md).'
+  risks: []
+review:
+  outcome: approved
+  reviewed_by: cto
+  reviewed_at: '2026-04-26T15:46:35Z'
+  note: 'Rework-2 closes 3 post-rework-1 findings (F1 dirfd containment, F2 stale
+    mtime bypass, F3 owned_files per-entry). Adversarial pre-review (oh-my-claudecode:code-reviewer,
+    independent) verdict: ship-as-is, with explicit Q-RM (risk map quality) verdict
+    ''adequate'' for all 3 findings — each names ≥1 concrete failure mode that the
+    test covers (F1 ELOOP-vs-EEXIST distinction, F2 malformed timestamp parse, F3
+    non-string yaml types). Q-NB (new bypasses introduced) verdict: none P1, 4 advisory
+    items (P2 partial-write orphan no cleanup on os.write failure → follow-up; P3
+    _utc_iso_to_epoch Z-only contract; P3 RUNTIME_DIR-as-symlink intentional; P3 bytes/tuple
+    owned_files coverage gap). Independent CTO verification: 42 targeted + 391 full
+    pytest PASS, 0 regressions; negative gate fire CONFIRMED (''missing: adversarial
+    review''); self-bootstrap successful — this approve passed through the new dirfd
+    writer + mtime check + per-entry validation. Quota-pause survived: F2+F3 done
+    pre-pause, F1 dirfd done post-resume by single-purpose Sonnet sub-agent. NO new
+    external child YAML across the entire rework. Second-order risk map present in
+    completion report with 5 fields per finding per CTO anti-pattern directive (preventing
+    narrow test-only fixes).'
+wiki_suggest:
+  generated_hints:
+    lessons:
+    - 'rework-2 closes 3 post-rework-1 findings (f1 dirfd containment, f2 stale mtime
+      bypass, f3 owned_files per-entry). adversarial pre-review (oh-my-claudecode:code-reviewer,
+      independent) verdict: ship-as-is, with explicit q-rm (risk map quality) verdict
+      ''adequate'' for all 3 findings — each names ≥1 concrete failure mode that the
+      test covers (f1 eloop-vs-eexist distinction, f2 malformed timestamp parse, f3
+      non-string yaml types). q-nb (new bypasses introduced) verdict: none p1, 4 advisory
+      items (p2 partial-write orphan no cleanup on os.write failure → follow-up; p3
+      _utc_iso_to_epoch z-only contract; p3 runtime_dir-as-symlink intentional; p3
+      bytes/tuple owned_files coverage gap). independent cto verification: 42 targeted
+      + 391 full pytest pass, 0 regressions; negative gate fire confirmed (''missing:
+      adversarial review''); self-bootstrap successful — this approve passed through
+      the new dirfd writer + mtime check + per-entry validation. quota-pause survived:
+      f2+f3 done pre-pause, f1 dirfd done post-resume by single-purpose sonnet sub-agent.
+      no new external child yaml across the entire rework. second-order risk map present
+      in completion report with 5 fields per finding per cto anti-pattern directive
+      (preventing narrow test-only fixes).'
+    decisions: []
+    deferred: []
+    patterns: []
+    current_state: []

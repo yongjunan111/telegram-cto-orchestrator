@@ -12,6 +12,7 @@ from lib.handoffs import (
     cmd_handoff_brief, cmd_handoff_room_memory, cmd_handoff_review,
     cmd_handoff_approve, cmd_handoff_request_changes,
     cmd_handoff_rework, cmd_handoff_add_subtask,
+    cmd_handoff_add_adversarial_review,
 )
 from lib.log import cmd_log_append
 from lib.sessions import cmd_session_list, cmd_session_show, cmd_session_upsert
@@ -309,6 +310,28 @@ def build_parser() -> argparse.ArgumentParser:
     haddsub_p.add_argument("--parent-criterion", default=None, dest="parent_criterion",
                            help="Optional parent acceptance criterion this sub-task covers")
     haddsub_p.set_defaults(func=cmd_handoff_add_subtask)
+
+    # handoff add-adversarial-review
+    hadvrev_p = handoff_sub.add_parser(
+        "add-adversarial-review",
+        help="Write an adversarial review markdown artifact under .orchestrator/runtime/adversarial-reviews/<handoff-id>/",
+    )
+    hadvrev_p.add_argument("handoff_id", metavar="<handoff-id>")
+    hadvrev_p.add_argument("--reviewer", required=True, help="Peer ID of the reviewer")
+    hadvrev_p.add_argument(
+        "--verdict", required=True,
+        choices=["ship-as-is", "needs-fix", "reject"],
+        help="Review verdict (only ship-as-is passes the approve gate)",
+    )
+    hadvrev_p.add_argument(
+        "--findings-count", required=True, dest="findings_count",
+        help="Number of findings (non-negative integer)",
+    )
+    hadvrev_p.add_argument(
+        "--body-file", required=True, dest="body_file",
+        help="Path to a file containing the markdown body",
+    )
+    hadvrev_p.set_defaults(func=cmd_handoff_add_adversarial_review)
 
     # handoff dispatch-plan
     hdispatch_p = handoff_sub.add_parser("dispatch-plan", help="Derived dispatch allocation recommendation")

@@ -1,6 +1,9 @@
 """Handoff command logic."""
 import os
+import stat
 import sys
+
+import yaml
 
 from . import storage
 from .validators import validate_slug, require_room, require_handoff, require_peer, is_slug_safe
@@ -1313,6 +1316,117 @@ def cmd_handoff_approve(args):
                 print(f"  [{idx}] {text}", file=sys.stderr)
             sys.exit(1)
 
+    # ---------------------------------------------------------------------------
+    # delegate_required role-enforcement gate (V1)
+    # Only runs for execution.mode == "delegate_required". Non-delegate handoffs
+    # are completely unaffected.
+    # ---------------------------------------------------------------------------
+    execution = handoff_state.get("execution") or {}
+    if isinstance(execution, dict) and execution.get("mode") == "delegate_required":
+        # 1) handoff.to must not be 'cto'
+        assignee = handoff_state.get("handoff", {}).get("to")
+        if assignee == "cto":
+            print(
+                "Error: Cannot approve — missing: assignee — handoff.to must not be 'cto' "
+                "for delegate_required (CTO is reviewer, not delegate owner)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # 2) resolution.completed_by must not be 'cto'
+        completer = handoff_state.get("resolution", {}).get("completed_by")
+        if completer == "cto":
+            print(
+                "Error: Cannot approve — missing: completer — resolution.completed_by must not be 'cto' "
+                "for delegate_required (CTO is reviewer, not delegate completer)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # 3) assignee peer must have 'team-lead' capability
+        if not os.path.isfile(storage.PEER_REGISTRY_PATH):
+            print(
+                "Error: Cannot approve — missing: peer registry — peer_registry.yaml not found",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        peer_reg = storage.read_state(storage.PEER_REGISTRY_PATH)
+        peers = peer_reg.get("peers") or []
+        assignee_peer = next(
+            (p for p in peers if isinstance(p, dict) and p.get("id") == assignee), None
+        )
+        if not assignee_peer:
+            print(
+                f"Error: Cannot approve — missing: assignee peer — '{assignee}' not found in peer_registry.yaml",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        capabilities = assignee_peer.get("capabilities") or []
+        if "team-lead" not in capabilities:
+            print(
+                f"Error: Cannot approve — missing: team-lead capability — assignee '{assignee}' "
+                f"lacks 'team-lead' in peer_registry capabilities (has: {capabilities})",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # 4) execution.child_handoffs must have >= 1 completed entry
+        children = execution.get("child_handoffs") or []
+        completed_children = [
+            c for c in children if isinstance(c, dict) and c.get("status") == "completed"
+        ]
+        if not completed_children:
+            print(
+                "Error: Cannot approve — missing: completed child ledger — "
+                "execution.child_handoffs has 0 completed entries "
+                "(worker evidence required for delegate_required)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # 4b) Each completed child must have non-empty owned_files AND non-empty evidence (F1)
+        for child in completed_children:
+            cid = child.get("id") or "(no id)"
+            owned_files = child.get("owned_files") or []
+            evidence = child.get("evidence") or ""
+            if not isinstance(owned_files, list) or len(owned_files) == 0:
+                print(
+                    f"Error: Cannot approve — missing: completed child evidence — "
+                    f"child '{cid}' has empty owned_files",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            # F3: each entry must be a non-empty string (strict — any invalid entry fails-closed)
+            for idx, entry in enumerate(owned_files):
+                if not isinstance(entry, str) or not entry.strip():
+                    print(
+                        f"Error: Cannot approve — missing: completed child evidence — "
+                        f"child '{cid}' owned_files entry [{idx}] is invalid: {entry!r} "
+                        f"(must be non-empty string)",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+            if not isinstance(evidence, str) or not evidence.strip():
+                print(
+                    f"Error: Cannot approve — missing: completed child evidence — "
+                    f"child '{cid}' has blank evidence",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+        # 5) Adversarial review artifact
+        artifact = _find_valid_adversarial_review(handoff_id, handoff_state)
+        if not artifact:
+            print(
+                "Error: Cannot approve — missing: adversarial review — "
+                "no markdown under .orchestrator/runtime/adversarial-reviews/<handoff-id>/ "
+                "matching all 5 conditions (handoff_id match, verdict==ship-as-is, "
+                "review_target_completed_at==completed_at, reviewer != assignee && != completer, "
+                "path under correct dir)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     now = storage.now_iso()
     handoff_state["review"] = {
         "outcome": "approved",
@@ -1638,6 +1752,426 @@ def cmd_handoff_block(args):
 # ---------------------------------------------------------------------------
 # complete
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# adversarial review helpers + add-adversarial-review
+# ---------------------------------------------------------------------------
+
+_ADVERSARIAL_REVIEW_REQUIRED_FIELDS = (
+    "handoff_id",
+    "reviewer",
+    "review_target_completed_at",
+    "verdict",
+    "findings_count",
+)
+
+
+def _parse_frontmatter(path):
+    """Read markdown file, extract YAML frontmatter between --- markers.
+    Returns dict or None on parse failure / missing frontmatter."""
+    try:
+        with open(path, "r") as f:
+            text = f.read()
+    except OSError:
+        return None
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        # also accept "---\n" at end of file with no body
+        end = text.find("\n---", 4)
+        if end < 0:
+            return None
+    fm_text = text[4:end]
+    try:
+        fm = yaml.safe_load(fm_text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(fm, dict):
+        return None
+    for key in _ADVERSARIAL_REVIEW_REQUIRED_FIELDS:
+        if key not in fm:
+            return None
+    return fm
+
+
+def _load_known_peer_ids() -> set:
+    """Load peer ids from peer_registry. Returns empty set on missing/malformed (fail-closed)."""
+    try:
+        if not os.path.isfile(storage.PEER_REGISTRY_PATH):
+            return set()
+        reg = storage.read_state(storage.PEER_REGISTRY_PATH)
+        peers = reg.get("peers") or []
+        return {p["id"] for p in peers if isinstance(p, dict) and "id" in p}
+    except Exception:
+        return set()
+
+
+def _utc_iso_to_epoch(s):
+    """Parse 'YYYY-MM-DDTHH:MM:SSZ' as UTC and return Unix epoch float.
+    Returns None on parse failure (caller treats as fail-closed)."""
+    if not isinstance(s, str) or not s:
+        return None
+    try:
+        from datetime import datetime, timezone
+        if s.endswith("Z"):
+            dt = datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        else:
+            return None  # Require explicit UTC marker
+        return dt.timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _find_valid_adversarial_review(handoff_id, handoff_state):
+    """Return path of the first artifact satisfying all conditions, or None.
+
+    Hardened against:
+    - F2b: reviewer must exist in peer_registry
+    - F2 (rework-2): artifact mtime must be strictly > completed_at epoch (UTC)
+    - F3 (rework-1): symlinked per-handoff dir or symlinked .md files are rejected;
+           realpath containment under the adversarial-reviews root is enforced.
+    - rework-4 boundary symmetry: symlinked 'adversarial-reviews' itself rejected
+           (matches writer's O_NOFOLLOW openat at this component). Above-runtime
+           symlinks remain allowed (RUNTIME_DIR or its ancestors may be symlinks).
+    """
+    adv_reviews_root = os.path.join(storage.RUNTIME_DIR, "adversarial-reviews")
+
+    # rework-4: refuse symlinked adversarial-reviews root, matching writer's
+    # O_NOFOLLOW openat. Realpath alone silently followed this symlink letting
+    # outside-repo artifacts pass approve. Above-runtime symlinks (RUNTIME_DIR
+    # or its ancestors) remain allowed — we only reject symlink AT this child.
+    if os.path.islink(adv_reviews_root):
+        return None
+    if not os.path.isdir(adv_reviews_root):
+        return None
+
+    base = os.path.join(adv_reviews_root, handoff_id)
+
+    # F3: refuse symlinked per-handoff dir
+    if os.path.islink(base):
+        return None
+    if not os.path.isdir(base):
+        return None
+
+    # rework-1 F3: realpath containment as defense-in-depth (catches .. traversal
+    # via filename and any TOCTOU swap that escapes between islink and listdir)
+    expected_base_real = os.path.realpath(base)
+    expected_root_real = os.path.realpath(adv_reviews_root)
+    # The per-handoff dir's realpath must be directly under the reviews root
+    if not expected_base_real.startswith(expected_root_real + os.sep):
+        return None
+
+    expected_completed_at = handoff_state.get("timestamps", {}).get("completed_at")
+    assignee = handoff_state.get("handoff", {}).get("to")
+    completer = handoff_state.get("resolution", {}).get("completed_by")
+    if not expected_completed_at:
+        return None
+
+    # F2b: load known peer ids once
+    known_peer_ids = _load_known_peer_ids()
+
+    for fname in sorted(os.listdir(base)):
+        if not fname.endswith(".md"):
+            continue
+        path = os.path.join(base, fname)
+
+        # F3: refuse symlinked .md files
+        if os.path.islink(path):
+            continue
+        if not os.path.isfile(path):
+            continue
+
+        # F3: realpath containment — file must resolve under expected_base_real
+        real_path = os.path.realpath(path)
+        if not real_path.startswith(expected_base_real + os.sep):
+            continue
+
+        fm = _parse_frontmatter(path)
+        if not fm:
+            continue
+        # 5 strict conditions
+        if fm.get("handoff_id") != handoff_id:
+            continue
+        if fm.get("verdict") != "ship-as-is":
+            continue
+        if fm.get("review_target_completed_at") != expected_completed_at:
+            continue
+        reviewer = fm.get("reviewer")
+        if not reviewer or reviewer == assignee or reviewer == completer:
+            continue
+        # F2b: reviewer must exist in peer_registry
+        if reviewer not in known_peer_ids:
+            continue
+        # F2 (new): artifact mtime must be strictly > completed_at epoch (UTC)
+        completed_at_epoch = _utc_iso_to_epoch(expected_completed_at)
+        if completed_at_epoch is None:
+            continue  # malformed completed_at → fail-closed, skip artifact
+        try:
+            mtime = os.stat(real_path).st_mtime
+        except OSError:
+            continue
+        if not (mtime > completed_at_epoch):  # strict >
+            continue
+        # path is already under base by construction
+        return path
+    return None
+
+
+def _open_or_create_dir_nofollow(parent_fd: int, name: str) -> int:
+    """openat(parent_fd, name, O_DIRECTORY|O_NOFOLLOW).  If ENOENT, mkdirat then retry.
+
+    O_NOFOLLOW makes openat fail with ELOOP (raised as OSError) if ``name`` is
+    a symlink.  This is atomic at the syscall level — no TOCTOU window.
+    Raises OSError (including ELOOP) on any symlink or filesystem failure.
+    """
+    flags = os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        return os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        os.mkdir(name, dir_fd=parent_fd)
+        return os.open(name, flags, dir_fd=parent_fd)
+    # ELOOP / other OSError from O_NOFOLLOW propagates — caller refuses.
+
+
+def _write_adversarial_review_atomic(
+    handoff_id: str,
+    timestamp: str,
+    md_text: str,
+    max_attempts: int = 10000,
+) -> str:
+    """Atomically create+publish an adversarial review markdown.
+
+    Publication-state-safe (rework-3): writes to a non-.md temp file in the
+    per-handoff dir, fsyncs, then atomically publishes to the final .md path
+    via os.link (fails atomically if final exists). Cleans up temp in all
+    paths. Reader's endswith('.md') filter ignores temp files even if the
+    helper crashes mid-write.
+
+    Preserves rework-2 invariants:
+      - dirfd descent from RUNTIME_DIR with O_NOFOLLOW per child
+      - above-runtime symlinks succeed (no O_NOFOLLOW on RUNTIME_DIR)
+      - F4 atomic collision retry: if final <ts>.md already exists,
+        retry with <ts>-1.md, <ts>-2.md, ...
+      - lstat ELOOP-vs-EEXIST distinguish on Linux O_NOFOLLOW preexisting symlink
+
+    Returns the absolute path of the written file.
+    Raises OSError on any filesystem failure or refused symlink.
+    """
+    import errno
+
+    # Open RUNTIME_DIR WITHOUT O_NOFOLLOW (above-runtime symlinks must succeed).
+    runtime_fd = os.open(storage.RUNTIME_DIR, os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        adv_fd = _open_or_create_dir_nofollow(runtime_fd, "adversarial-reviews")
+    finally:
+        os.close(runtime_fd)
+    try:
+        new_fd = _open_or_create_dir_nofollow(adv_fd, handoff_id)
+    finally:
+        os.close(adv_fd)
+    fd = new_fd
+
+    pid = os.getpid()
+    try:
+        for attempt in range(max_attempts):
+            final_name = (
+                f"{timestamp}.md" if attempt == 0
+                else f"{timestamp}-{attempt}.md"
+            )
+
+            # Acquire a unique temp name. Name MUST NOT end in '.md' so
+            # reader's endswith('.md') filter skips it on partial-write
+            # crashes. Pattern: .<ts>.md.tmp.<pid>.<temp_counter>
+            temp_counter = 0
+            temp_name = None
+            temp_fd = None
+            while temp_counter < 1000:
+                candidate = f".{timestamp}.md.tmp.{pid}.{temp_counter}"
+                try:
+                    temp_fd = os.open(
+                        candidate,
+                        os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                        | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        0o600,
+                        dir_fd=fd,
+                    )
+                    temp_name = candidate
+                    break
+                except FileExistsError:
+                    # Distinguish ELOOP-as-EEXIST (temp path is symlink) from
+                    # real collision. Symlinks at this path are an attack — refuse.
+                    try:
+                        st = os.lstat(candidate, dir_fd=fd)
+                        if stat.S_ISLNK(st.st_mode):
+                            raise OSError(
+                                f"adversarial-review temp path "
+                                f"'{candidate}' is a symlink — refusing write"
+                            )
+                    except OSError:
+                        raise
+                    temp_counter += 1
+            if temp_fd is None or temp_name is None:
+                raise OSError(
+                    f"could not reserve adversarial-review temp file under "
+                    f"handoff '{handoff_id}' after 1000 temp_counter attempts"
+                )
+
+            # Write content to temp + fsync. On ANY error, unlink temp + raise.
+            published = False
+            try:
+                try:
+                    data = md_text.encode("utf-8")
+                    while data:
+                        written = os.write(temp_fd, data)
+                        if written <= 0:
+                            raise OSError(
+                                "os.write returned non-positive on adversarial-review temp"
+                            )
+                        data = data[written:]
+                    os.fsync(temp_fd)
+                finally:
+                    os.close(temp_fd)
+                    temp_fd = None
+
+                # Atomic publish: os.link(temp, final). Fails with EEXIST
+                # atomically if final exists. follow_symlinks=False prevents
+                # following any newly-planted symlink at the final name.
+                try:
+                    os.link(
+                        temp_name, final_name,
+                        src_dir_fd=fd, dst_dir_fd=fd,
+                        follow_symlinks=False,
+                    )
+                    published = True
+                except FileExistsError:
+                    # Final collision: check if it's a symlink (refuse) or real file (retry)
+                    try:
+                        st = os.lstat(final_name, dir_fd=fd)
+                        if stat.S_ISLNK(st.st_mode):
+                            raise OSError(
+                                f"adversarial-review path '{final_name}' is a symlink — refusing write"
+                            )
+                    except OSError:
+                        raise
+                    # Real collision: try next outer iteration with -N suffix
+                # Other OSError on link → propagate via outer except below
+            finally:
+                # Always unlink temp (whether published or not).
+                # Failure to unlink is best-effort.
+                if temp_fd is not None:
+                    try:
+                        os.close(temp_fd)
+                    except OSError:
+                        pass
+                try:
+                    os.unlink(temp_name, dir_fd=fd)
+                except OSError:
+                    pass
+
+            if published:
+                # Best-effort directory fsync for durability.
+                try:
+                    os.fsync(fd)
+                except OSError:
+                    pass
+                return os.path.join(
+                    storage.RUNTIME_DIR,
+                    "adversarial-reviews",
+                    handoff_id,
+                    final_name,
+                )
+            # else: collision on final, retry next attempt with -N suffix
+
+        raise OSError(
+            f"could not publish unique adversarial-review filename for "
+            f"handoff '{handoff_id}' after {max_attempts} attempts"
+        )
+    finally:
+        os.close(fd)
+
+
+def cmd_handoff_add_adversarial_review(args):
+    """Write an adversarial review markdown artifact under
+    .orchestrator/runtime/adversarial-reviews/<handoff-id>/<UTC-iso-ts>.md
+    with strict frontmatter copying handoff timestamps.completed_at."""
+    handoff_id = args.handoff_id
+    reviewer = args.reviewer
+    verdict = args.verdict
+    findings_count = args.findings_count
+    body_file = args.body_file
+
+    # Validate handoff exists; load to copy completed_at
+    require_handoff(handoff_id)
+    handoff_state = storage.read_state(storage.handoff_path(handoff_id))
+    completed_at = handoff_state.get("timestamps", {}).get("completed_at")
+    if not completed_at:
+        print(
+            f"Error: handoff '{handoff_id}' has no timestamps.completed_at — "
+            f"cannot write adversarial review until handoff is completed.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # F2a: validate reviewer exists in peer_registry
+    require_peer(reviewer)
+
+    # Validate body file exists
+    if not os.path.isfile(body_file):
+        print(f"Error: body file not found: {body_file!r}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        with open(body_file, "r") as f:
+            body = f.read()
+    except OSError as exc:
+        print(f"Error: cannot read body file: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate findings_count int
+    try:
+        findings_count_int = int(findings_count)
+    except (TypeError, ValueError):
+        print(
+            f"Error: --findings-count must be a non-negative integer, got {findings_count!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if findings_count_int < 0:
+        print(
+            f"Error: --findings-count must be non-negative, got {findings_count_int}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Compose markdown
+    timestamp = storage.now_iso()  # UTC iso second-precision
+    fm = {
+        "handoff_id": handoff_id,
+        "reviewer": reviewer,
+        "review_target_completed_at": completed_at,
+        "verdict": verdict,
+        "findings_count": findings_count_int,
+    }
+    fm_yaml = yaml.safe_dump(fm, default_flow_style=False, sort_keys=True, allow_unicode=True)
+    md_text = f"---\n{fm_yaml}---\n\n{body}"
+    if not md_text.endswith("\n"):
+        md_text += "\n"
+
+    # Write under .orchestrator/runtime/adversarial-reviews/<handoff-id>/
+    # F1+F4: dirfd-based atomic writer with O_NOFOLLOW on all internal dirs
+    try:
+        target_path = _write_adversarial_review_atomic(handoff_id, timestamp, md_text)
+    except (OSError, ValueError) as exc:
+        print(f"Error: cannot write adversarial review: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Adversarial review written: {target_path}")
+    print(f"  handoff_id: {handoff_id}")
+    print(f"  reviewer: {reviewer}")
+    print(f"  verdict: {verdict}")
+    print(f"  review_target_completed_at: {completed_at}")
+    print(f"  findings_count: {findings_count_int}")
+
 
 # ---------------------------------------------------------------------------
 # add-subtask
