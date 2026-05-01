@@ -20,7 +20,12 @@ dist/
 .env
 .env.local
 .omc/
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/handoff-brief-writer/
+.claude/skills/handoff-brief-writer/**
+!.claude/skills/handoff-brief-writer/SKILL.md
 .orchestrator/runtime/
 .orchestrator/test-fixtures/
 .orchestrator/config.yaml
